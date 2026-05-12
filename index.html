@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI 本地文件搜尋</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <div class="glass-card">
+            <header>
+                <h1>📑 <span>Local RAG</span> 搜尋</h1>
+                <div id="status" class="status-indicator">正在初始化...</div>
+            </header>
+
+            <div class="upload-area">
+                <label for="pdf-upload" class="upload-btn">
+                    <i>📤</i> 點擊或拖放 PDF 文件
+                </label>
+                <input type="file" id="pdf-upload" accept=".pdf" hidden>
+            </div>
+
+            <div id="search-area" class="search-box" style="display:none;">
+                <div class="input-wrapper">
+                    <input type="text" id="query" placeholder="想從文件中找什麼？">
+                    <button id="search-btn">🔍</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="results" class="results-list">
+            <!-- 搜尋結果會顯示在這裡 -->
+        </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>
