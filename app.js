@@ -33,7 +33,10 @@ async function init() {
     try {
         status.innerText = "⏳ 載入模型中...";
         // 建議開啟 WebGPU 加速 (若硬體支援)
-        detector = await pipeline('object-detection', 'Xenova/yolov8n');
+        // 修改 app.js 初始化
+       detector = await pipeline('object-detection', 'Xenova/yolov8n', {
+       device: 'webgpu' // 強制開啟網頁顯示卡加速
+       });
         status.innerText = "✅ 偵測中";
         
         await setupCamera();
