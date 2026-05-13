@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>YOLOv10 AI Vision</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="style.css">
+    <!-- 建議預載入 ONNX Runtime Web，雖然 Transformers.js 會自動處理，但這能增加穩定性 -->
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+</head>
+<body>
+
+    <div class="camera-container">
+        <!-- 即時相機畫面：加上 playsinline 避免 iOS 強制全螢幕 -->
+        <video id="video" autoplay muted playsinline></video>
+        
+        <!-- 照片模式顯示用的隱藏圖片 -->
+        <img id="image-proxy" style="display:none;">
+        
+        <!-- AI 框線繪製層：必須疊在最上方 -->
+        <canvas id="canvas"></canvas>
+        
+        <!-- 狀態顯示條 -->
+        <div id="status" class="overlay-status">系統啟動中...</div>
+    </div>
+
+    <!-- 控制區 -->
+    <div class="controls">
+        <!-- 上傳按鈕樣式化 -->
+        <label for="image-upload" class="btn primary">
+            📤 辨識照片
+        </label>
+        <input type="file" id="image-upload" accept="image/*" hidden>
+        
+        <!-- 提示文字 -->
+        <div class="hint">點擊畫面可恢復相機模式</div>
+    </div>
+
+    <!-- 載入主程式 -->
+    <script type="module" src="app.js"></script>
+
+    <!-- 註冊 Service Worker -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js').then(reg => {
+                    console.log('SW 註冊成功');
+                    // 檢查更新
+                    reg.update();
+                }).catch(err => {
+                    console.log('SW 註冊失敗', err);
+                });
+            });
+        }
+    </script>
+</body>
+</html>
