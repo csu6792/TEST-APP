@@ -1,18 +1,47 @@
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
+const video =
+  document.getElementById("video");
 
-const startBtn = document.getElementById("startBtn");
+const canvas =
+  document.getElementById("canvas");
 
-let session;
+const ctx =
+  canvas.getContext("2d");
+
+const startBtn =
+  document.getElementById("startBtn");
+
+const fpsText =
+  document.getElementById("fps");
 
 const MODEL_SIZE = 640;
 
+let session;
+
+let lastTime = performance.now();
+
+const classNames = [
+  "person",
+  "bicycle",
+  "car",
+  "motorcycle",
+  "airplane",
+  "bus",
+  "train",
+  "truck"
+];
+
 async function loadModel() {
 
-  session = await ort.InferenceSession.create(
-    "./model/yolo26n.onnx"
-  );
+  ort.env.wasm.wasmPaths =
+    "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
+
+  session =
+    await ort.InferenceSession.create(
+      "./model/yolo.onnx",
+      {
+        executionProviders: ["wasm"]
+      }
+    );
 
   console.log("model loaded");
 }
@@ -23,15 +52,21 @@ startBtn.onclick = async () => {
 
   const stream =
     await navigator.mediaDevices.getUserMedia({
-      video: true
+      video: {
+        facingMode: "environment"
+      },
+      audio: false
     });
 
   video.srcObject = stream;
 
   video.onloadedmetadata = () => {
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width =
+      video.videoWidth;
+
+    canvas.height =
+      video.videoHeight;
 
     detectFrame();
 
@@ -41,11 +76,17 @@ startBtn.onclick = async () => {
 
 async function detectFrame() {
 
+  const start =
+    performance.now();
+
   const tempCanvas =
     document.createElement("canvas");
 
-  tempCanvas.width = MODEL_SIZE;
-  tempCanvas.height = MODEL_SIZE;
+  tempCanvas.width =
+    MODEL_SIZE;
+
+  tempCanvas.height =
+    MODEL_SIZE;
 
   const tempCtx =
     tempCanvas.getContext("2d");
@@ -83,6 +124,15 @@ async function detectFrame() {
 
   drawBoxes(outputs.output0.cpuData);
 
+  const end =
+    performance.now();
+
+  const fps =
+    Math.round(1000 / (end - start));
+
+  fpsText.innerText =
+    `FPS: ${fps}`;
+
   requestAnimationFrame(detectFrame);
 }
 
@@ -93,7 +143,11 @@ function preprocess(data) {
       3 * MODEL_SIZE * MODEL_SIZE
     );
 
-  for (let i = 0; i < MODEL_SIZE * MODEL_SIZE; i++) {
+  for (
+    let i = 0;
+    i < MODEL_SIZE * MODEL_SIZE;
+    i++
+  ) {
 
     float32Data[i] =
       data[i * 4] / 255;
@@ -122,41 +176,70 @@ function drawBoxes(data) {
   );
 
   const scaleX =
-    video.videoWidth / MODEL_SIZE;
+    canvas.width / MODEL_SIZE;
 
   const scaleY =
-    video.videoHeight / MODEL_SIZE;
+    canvas.height / MODEL_SIZE;
 
-  for (let i = 0; i < data.length; i += 6) {
+  for (
+    let i = 0;
+    i < data.length;
+    i += 6
+  ) {
 
     const x1 = data[i];
     const y1 = data[i + 1];
     const x2 = data[i + 2];
     const y2 = data[i + 3];
 
-    const score = data[i + 4];
-    const classId = data[i + 5];
+    const score =
+      data[i + 4];
 
-    if (score < 0.5) continue;
+    const classId =
+      Math.round(data[i + 5]);
 
-    ctx.strokeStyle = "#00ff00";
+    if (score < 0.5)
+      continue;
+
+    const w = x2 - x1;
+    const h = y2 - y1;
+
+    ctx.strokeStyle =
+      "#00ff88";
+
     ctx.lineWidth = 3;
 
     ctx.strokeRect(
       x1 * scaleX,
       y1 * scaleY,
-      (x2 - x1) * scaleX,
-      (y2 - y1) * scaleY
+      w * scaleX,
+      h * scaleY
     );
 
-    ctx.fillStyle = "#00ff00";
+    ctx.fillStyle =
+      "#00ff88";
 
-    ctx.font = "20px Arial";
+    ctx.font =
+      "18px Arial";
+
+    const label =
+      `${classNames[classId] || classId}
+      ${score.toFixed(2)}`;
+
+    ctx.fillRect(
+      x1 * scaleX,
+      y1 * scaleY - 30,
+      140,
+      30
+    );
+
+    ctx.fillStyle =
+      "black";
 
     ctx.fillText(
-      `ID:${classId} ${score.toFixed(2)}`,
-      x1 * scaleX,
-      y1 * scaleY - 10
+      label,
+      x1 * scaleX + 5,
+      y1 * scaleY - 8
     );
   }
 }
