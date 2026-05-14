@@ -1,9 +1,12 @@
-const upload = document.getElementById("upload");
-const image = document.getElementById("image");
+const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
+const startBtn = document.getElementById("startBtn");
+
 let session;
+
+const MODEL_SIZE = 640;
 
 async function loadModel() {
 
@@ -16,70 +19,93 @@ async function loadModel() {
 
 loadModel();
 
-upload.addEventListener("change", async (e) => {
+startBtn.onclick = async () => {
 
-  const file = e.target.files[0];
+  const stream =
+    await navigator.mediaDevices.getUserMedia({
+      video: true
+    });
 
-  image.src = URL.createObjectURL(file);
+  video.srcObject = stream;
 
-  image.onload = async () => {
+  video.onloadedmetadata = () => {
 
-    detect(image);
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    detectFrame();
 
   };
 
-});
+};
 
-async function detect(img) {
+async function detectFrame() {
 
-  const size = 640;
+  const tempCanvas =
+    document.createElement("canvas");
 
-  canvas.width = img.width;
-  canvas.height = img.height;
+  tempCanvas.width = MODEL_SIZE;
+  tempCanvas.height = MODEL_SIZE;
 
-  const tempCanvas = document.createElement("canvas");
-  tempCanvas.width = size;
-  tempCanvas.height = size;
+  const tempCtx =
+    tempCanvas.getContext("2d");
 
-  const tempCtx = tempCanvas.getContext("2d");
-
-  tempCtx.drawImage(img, 0, 0, size, size);
-
-  const imageData = tempCtx.getImageData(0, 0, size, size);
-
-  const input = preprocessing(imageData.data, size);
-
-  const tensor = new ort.Tensor(
-    "float32",
-    input,
-    [1, 3, size, size]
+  tempCtx.drawImage(
+    video,
+    0,
+    0,
+    MODEL_SIZE,
+    MODEL_SIZE
   );
 
-  const outputs = await session.run({
-    images: tensor
-  });
+  const imageData =
+    tempCtx.getImageData(
+      0,
+      0,
+      MODEL_SIZE,
+      MODEL_SIZE
+    );
 
-  console.log(outputs);
+  const input =
+    preprocess(imageData.data);
+
+  const tensor =
+    new ort.Tensor(
+      "float32",
+      input,
+      [1, 3, MODEL_SIZE, MODEL_SIZE]
+    );
+
+  const outputs =
+    await session.run({
+      images: tensor
+    });
 
   drawBoxes(outputs.output0.cpuData);
 
+  requestAnimationFrame(detectFrame);
 }
 
-function preprocessing(data, size) {
+function preprocess(data) {
 
-  const float32Data = new Float32Array(
-    3 * size * size
-  );
+  const float32Data =
+    new Float32Array(
+      3 * MODEL_SIZE * MODEL_SIZE
+    );
 
-  for (let i = 0; i < size * size; i++) {
+  for (let i = 0; i < MODEL_SIZE * MODEL_SIZE; i++) {
 
     float32Data[i] =
       data[i * 4] / 255;
 
-    float32Data[i + size * size] =
+    float32Data[
+      i + MODEL_SIZE * MODEL_SIZE
+    ] =
       data[i * 4 + 1] / 255;
 
-    float32Data[i + size * size * 2] =
+    float32Data[
+      i + MODEL_SIZE * MODEL_SIZE * 2
+    ] =
       data[i * 4 + 2] / 255;
   }
 
@@ -88,10 +114,18 @@ function preprocessing(data, size) {
 
 function drawBoxes(data) {
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
 
-  const scaleX = image.width / 640;
-  const scaleY = image.height / 640;
+  const scaleX =
+    video.videoWidth / MODEL_SIZE;
+
+  const scaleY =
+    video.videoHeight / MODEL_SIZE;
 
   for (let i = 0; i < data.length; i += 6) {
 
@@ -105,27 +139,24 @@ function drawBoxes(data) {
 
     if (score < 0.5) continue;
 
-    const w = x2 - x1;
-    const h = y2 - y1;
-
-    ctx.strokeStyle = "red";
+    ctx.strokeStyle = "#00ff00";
     ctx.lineWidth = 3;
 
     ctx.strokeRect(
       x1 * scaleX,
       y1 * scaleY,
-      w * scaleX,
-      h * scaleY
+      (x2 - x1) * scaleX,
+      (y2 - y1) * scaleY
     );
 
-    ctx.fillStyle = "red";
+    ctx.fillStyle = "#00ff00";
+
+    ctx.font = "20px Arial";
 
     ctx.fillText(
       `ID:${classId} ${score.toFixed(2)}`,
       x1 * scaleX,
-      y1 * scaleY - 5
+      y1 * scaleY - 10
     );
-
   }
-
 }
