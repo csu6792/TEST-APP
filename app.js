@@ -28,6 +28,24 @@ const classNames = [
   'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
 ];
 
+let lastSpokenLabel = "";
+let lastSpokenTime = 0;
+
+function speakObject(label) {
+  const now = Date.now();
+  // 避免短時間內重複播放 (冷卻時間 3 秒)
+  if (label === lastSpokenLabel && now - lastSpokenTime < 3000) return;
+
+  const msg = new SpeechSynthesisUtterance(label);
+  msg.lang = "en-US"; // 或是 "zh-TW"
+  msg.rate = 1.0;
+  msg.pitch = 1.2; // 稍微高一點，聽起來更具未來感
+  window.speechSynthesis.speak(msg);
+
+  lastSpokenLabel = label;
+  lastSpokenTime = now;
+}
+
 async function loadModel() {
   try {
     startBtn.disabled = true;
@@ -139,6 +157,17 @@ function drawBoxes(data, sx, sy, size) {
   for (let i = 0; i < data.length; i += 6) {
     const score = data[i + 4];
     if (score < 0.45) continue; // 信心門檻
+
+     // 在 drawBoxes 迴圈內
+     if (score > 0.85) {
+      // 觸發語音播報
+      speakObject(label);
+    
+      // 觸發空間音效 (取框框中心點 x)
+      const centerX = x + w / 2;
+      const distanceScale = h / canvasH; // 框越高代表物體越近
+      playSpatialPing(centerX, canvasW, distanceScale);
+     }
 
     // 4. 座標轉換鏈條：模型 -> 視訊裁切區 -> 原始視訊 -> 螢幕 Canvas
     const x = ((data[i] * modelToVideoScale) + sx) * displayScale + xOffset;
