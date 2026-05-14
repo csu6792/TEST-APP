@@ -29,10 +29,10 @@ const classNames = [
 ];
 
 // 初始化音訊上下文
-const AudioContext = window.AudioContext || window.webkitAudioContext;
-const audioCtx = new AudioContext();
-const panner = audioCtx.createStereoPanner();
-panner.connect(audioCtx.destination);
+//const AudioContext = window.AudioContext || window.webkitAudioContext;
+//const audioCtx = new AudioContext();
+//const panner = audioCtx.createStereoPanner();
+//panner.connect(audioCtx.destination);
 
 // 限制語音播報頻率的變數
 let lastSpokenLabel = "";
@@ -83,9 +83,9 @@ startBtn.onclick = async () => {
   if (isDetecting) return;
 
   // --- 關鍵：解鎖音訊 ---
-    if (audioCtx.state === 'suspended') {
-        await audioCtx.resume();
-    }
+    //if (audioCtx.state === 'suspended') {
+     //   await audioCtx.resume();
+    ///}
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -171,9 +171,9 @@ function drawBoxes(data, sx, sy, size) {
     if (score < 0.45) continue; // 信心門檻
 
      // 在 drawBoxes 迴圈內
-     if (score > 0.85) {
+     //if (score > 0.85) {
       // 觸發語音播報
-      speakObject(label);
+      //speakObject(label);
     
       // 觸發空間音效 (取框框中心點 x)
       //const centerX = x + w / 2;
