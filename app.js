@@ -80,16 +80,14 @@ startBtn.onclick = async () => {
 async function detectFrame() {
   if (!session || !isDetecting) return;
 
-  // 獲取原始視訊尺寸
   const vW = video.videoWidth;
   const vH = video.videoHeight;
 
-  // 計算 crop 尺寸 (以短邊為主，模擬 cover 效果)
+  // 計算中間正方形裁切資訊
   const size = Math.min(vW, vH);
   const sx = (vW - size) / 2;
   const sy = (vH - size) / 2;
 
-  // 將視訊中間的正方形區域繪製到 640x640 的暫存畫布上
   tempCtx.drawImage(video, sx, sy, size, size, 0, 0, MODEL_SIZE, MODEL_SIZE);
 
   const imageData = tempCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE);
@@ -99,7 +97,7 @@ async function detectFrame() {
   const outputs = await session.run({ images: tensor });
   const outputData = outputs[Object.keys(outputs)[0]].cpuData;
 
-  // 傳送 sx, sy, size 給繪圖函數進行反向計算
+  // --- 關鍵：傳入 sx, sy, size ---
   drawBoxes(outputData, sx, sy, size);
 
   requestAnimationFrame(detectFrame);
@@ -116,8 +114,8 @@ function preprocess(data) {
   return float32Data;
 }
 
-function drawBoxes(data) {
-  // --- 關鍵修正：確保畫布解析度與顯示尺寸一致 ---
+function drawBoxes(data, sx, sy, size) {
+  // 1. 自動同步 Canvas 畫布解析度與 CSS 顯示大小 (解決模糊與偏移)
   if (canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight) {
     canvas.width = canvas.clientWidth;
     canvas.height = canvas.clientHeight;
@@ -130,100 +128,117 @@ function drawBoxes(data) {
   const canvasW = canvas.width;
   const canvasH = canvas.height;
 
-  // 1. 計算 object-fit: cover 的縮放比例與位移
-  // 這段邏輯必須與 CSS 的 object-fit 完全對應
-  const scale = Math.max(canvasW / videoW, canvasH / videoH);
-  const xOffset = (canvasW - videoW * scale) / 2;
-  const yOffset = (canvasH - videoH * scale) / 2;
+  // 2. 計算 object-fit: cover 的顯示縮放與位移
+  const displayScale = Math.max(canvasW / videoW, canvasH / videoH);
+  const xOffset = (canvasW - videoW * displayScale) / 2;
+  const yOffset = (canvasH - videoH * displayScale) / 2;
 
-  // YOLO 模型通常是將影像 Resize 到 640x640（不維持比例的拉伸）
-  const modelScaleX = videoW / 640;
-  const modelScaleY = videoH / 640;
+  // 3. 模型座標還原比例 (因為當初 detectFrame 切的是正方形 size)
+  const modelToVideoScale = size / 640;
 
   for (let i = 0; i < data.length; i += 6) {
     const score = data[i + 4];
-    if (score < 0.45) continue;
+    if (score < 0.45) continue; // 信心門檻
 
-    // 2. 座標轉換：從模型 640x640 -> 視訊原尺寸 -> 螢幕顯示尺寸
-    const x1 = data[i] * modelScaleX * scale + xOffset;
-    const y1 = data[i + 1] * modelScaleY * scale + yOffset;
-    const x2 = data[i + 2] * modelScaleX * scale + xOffset;
-    const y2 = data[i + 3] * modelScaleY * scale + yOffset;
-
-    const w = x2 - x1;
-    const h = y2 - y1;
+    // 4. 座標轉換鏈條：模型 -> 視訊裁切區 -> 原始視訊 -> 螢幕 Canvas
+    const x = ((data[i] * modelToVideoScale) + sx) * displayScale + xOffset;
+    const y = ((data[i + 1] * modelToVideoScale) + sy) * displayScale + yOffset;
+    const w = (data[i + 2] - data[i]) * modelToVideoScale * displayScale;
+    const h = (data[i + 3] - data[i + 1]) * modelToVideoScale * displayScale;
 
     const classId = Math.round(data[i + 5]);
     const label = classNames[classId] || "Object";
 
-    // --- VisionOS 視覺設計 ---
-    
-    // 繪製外框陰影
-    ctx.save(); // 保存狀態以避免陰影污染其他繪圖
-    ctx.shadowBlur = 20;
+    // --- 開始繪製 VisionOS 風格介面 ---
+
+    // A. 主體圓角框 (白色半透明線條)
+    ctx.save();
+    ctx.shadowBlur = 15;
     ctx.shadowColor = "rgba(0, 0, 0, 0.4)";
-    
-    // 主圓角框 (白色半透明)
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
     ctx.lineWidth = 2;
-    drawRoundedRect(ctx, x1, y1, w, h, 12);
+    drawRoundedRect(ctx, x, y, w, h, 12);
     ctx.stroke();
     ctx.restore();
 
-    // 懸浮標籤 (Glassmorphism)
-    const font = "600 13px -apple-system, BlinkMacSystemFont, sans-serif";
+    // B. 懸浮資訊標籤 (玻璃質感面板)
+    const font = "600 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
     ctx.font = font;
     const txt = `${label.toUpperCase()} ${Math.round(score * 100)}%`;
     const txtWidth = ctx.measureText(txt).width;
     
     const labelW = txtWidth + 20;
-    const labelH = 26;
-    const labelX = x1;
-    const labelY = y1 - labelH - 10; // 懸浮高度
+    const labelH = 28;
+    const labelX = x;
+    const labelY = y - labelH - 10; // 向上偏移，增加懸浮感
 
-    // 標籤背景
-    ctx.fillStyle = "rgba(20, 20, 20, 0.6)";
-    ctx.backdropFilter = "blur(10px)"; // 注意：目前僅部分瀏覽器支援 canvas backdropFilter
-    drawRoundedRect(ctx, labelX, labelY, labelW, labelH, 13);
+    // 標籤背景 (深色毛玻璃)
+    ctx.fillStyle = "rgba(10, 10, 10, 0.55)";
+    drawRoundedRect(ctx, labelX, labelY, labelW, labelH, 14);
     ctx.fill();
     
-    // 標籤邊框
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+    // 標籤細邊框
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // 標籤文字
+    // 標籤文字 (純白)
     ctx.fillStyle = "#ffffff";
     ctx.textBaseline = "middle";
     ctx.fillText(txt, labelX + 10, labelY + labelH / 2 + 1);
 
-    // 四角裝飾 (這讓它看起來更像 AR 偵測)
-    drawVisionCorners(ctx, x1, y1, w, h, 15);
+    // C. 繪製強化四角 (調用下方的 drawVisionCorners)
+    drawVisionCorners(ctx, x, y, w, h, 18);
   }
 }
 
 // 輔助函式：VisionOS 風格轉角
+/**
+ * 繪製 VisionOS 感的四角強化線段
+ * @param {CanvasRenderingContext2D} ctx - Canvas 上下文
+ * @param {number} x - 左上角 X
+ * @param {number} y - 左上角 Y
+ * @param {number} w - 寬度
+ * @param {number} h - 高度
+ * @param {number} len - 線段長度
+ */
 function drawVisionCorners(ctx, x, y, w, h, len) {
-  ctx.strokeStyle = "#00ff88"; // 使用你的主題綠色作為焦點
-  ctx.lineWidth = 3;
-  ctx.lineCap = "round";
+  ctx.save();
+  ctx.strokeStyle = "#00ff88"; // Vision 主題綠色
+  ctx.lineWidth = 3.5;
+  ctx.lineCap = "round"; // 讓線段末端圓潤
+  ctx.shadowBlur = 8;
+  ctx.shadowColor = "rgba(0, 255, 136, 0.5)";
 
-  // 左上
+  // 左上角
   ctx.beginPath();
-  ctx.moveTo(x, y + len); ctx.lineTo(x, y); ctx.lineTo(x + len, y);
+  ctx.moveTo(x, y + len);
+  ctx.lineTo(x, y);
+  ctx.lineTo(x + len, y);
   ctx.stroke();
-  // 右上
+
+  // 右上角
   ctx.beginPath();
-  ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len);
+  ctx.moveTo(x + w - len, y);
+  ctx.lineTo(x + w, y);
+  ctx.lineTo(x + w, y + len);
   ctx.stroke();
-  // 左下
+
+  // 左下角
   ctx.beginPath();
-  ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h);
+  ctx.moveTo(x, y + h - len);
+  ctx.lineTo(x, y + h);
+  ctx.lineTo(x + len, y + h);
   ctx.stroke();
-  // 右下
+
+  // 右下角
   ctx.beginPath();
-  ctx.moveTo(x + w - len, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - len);
+  ctx.moveTo(x + w - len, y + h);
+  ctx.lineTo(x + w, y + h);
+  ctx.lineTo(x + w, y + h - len);
   ctx.stroke();
+
+  ctx.restore();
 }
 
 /**
