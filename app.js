@@ -164,9 +164,9 @@ function drawBoxes(data, sx, sy, size) {
       speakObject(label);
     
       // 觸發空間音效 (取框框中心點 x)
-      const centerX = x + w / 2;
-      const distanceScale = h / canvasH; // 框越高代表物體越近
-      playSpatialPing(centerX, canvasW, distanceScale);
+      //const centerX = x + w / 2;
+      //const distanceScale = h / canvasH; // 框越高代表物體越近
+      //playSpatialPing(centerX, canvasW, distanceScale);
      }
 
     // 4. 座標轉換鏈條：模型 -> 視訊裁切區 -> 原始視訊 -> 螢幕 Canvas
