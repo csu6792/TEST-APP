@@ -3,6 +3,7 @@ const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
 const fpsText = document.getElementById("fps");
+const statusText = document.getElementById("statusText");
 
 const MODEL_SIZE = 640;
 let session;
@@ -42,6 +43,7 @@ async function loadModel() {
 
     console.log("Model loaded successfully");
     startBtn.disabled = false; // 載入成功後才啟用按鈕
+    statusText.innerText = "AI 模型已就緒";
     startBtn.innerText = "開始偵測";
   } catch (e) {
     console.error("模型載入失敗:", e);
