@@ -1,21 +1,14 @@
-const video =
-  document.getElementById("video");
-
-const canvas =
-  document.getElementById("canvas");
-
-const ctx =
-  canvas.getContext("2d");
-
-const startBtn =
-  document.getElementById("startBtn");
-
-const fpsText =
-  document.getElementById("fps");
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const startBtn = document.getElementById("startBtn");
+const fpsText = document.getElementById("fps");
 
 const MODEL_SIZE = 640;
 
-let session;
+let session = null;
+let modelReady = false;
+let isRunning = false;
 
 let lastTime = performance.now();
 
@@ -30,142 +23,140 @@ const classNames = [
   "truck"
 ];
 
+
+// =========================
+// 🧠 Load Model
+// =========================
 async function loadModel() {
 
   ort.env.wasm.wasmPaths =
     "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
 
-  session =
-    await ort.InferenceSession.create(
-      "./model/yolo26n.onnx",
-      {
-        executionProviders: ["wasm"]
-      }
-    );
+  session = await ort.InferenceSession.create(
+    "./model/yolo26n.onnx",
+    {
+      executionProviders: ["wasm"]
+    }
+  );
 
+  modelReady = true;
   console.log("model loaded");
 }
 
 loadModel();
 
+
+// =========================
+// 🎬 Start Camera
+// =========================
 startBtn.onclick = async () => {
 
-  const stream =
-    await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: "environment"
-      },
-      audio: false
-    });
+  if (!modelReady) {
+    alert("AI model still loading...");
+    return;
+  }
+
+  if (isRunning) return;
+  isRunning = true;
+
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: "environment" },
+    audio: false
+  });
 
   video.srcObject = stream;
 
   video.onloadedmetadata = () => {
 
-    canvas.width =
-      video.videoWidth;
-
-    canvas.height =
-      video.videoHeight;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
 
     detectFrame();
-
   };
-
 };
 
+
+// =========================
+// 🔁 Detection Loop
+// =========================
 async function detectFrame() {
 
-  const start =
-    performance.now();
+  if (!modelReady || !session) {
+    requestAnimationFrame(detectFrame);
+    return;
+  }
 
-  const tempCanvas =
-    document.createElement("canvas");
+  const start = performance.now();
 
-  tempCanvas.width =
-    MODEL_SIZE;
+  // temp canvas
+  const tempCanvas = document.createElement("canvas");
+  tempCanvas.width = MODEL_SIZE;
+  tempCanvas.height = MODEL_SIZE;
 
-  tempCanvas.height =
-    MODEL_SIZE;
+  const tempCtx = tempCanvas.getContext("2d");
 
-  const tempCtx =
-    tempCanvas.getContext("2d");
+  tempCtx.drawImage(video, 0, 0, MODEL_SIZE, MODEL_SIZE);
 
-  tempCtx.drawImage(
-    video,
+  const imageData = tempCtx.getImageData(
     0,
     0,
     MODEL_SIZE,
     MODEL_SIZE
   );
 
-  const imageData =
-    tempCtx.getImageData(
-      0,
-      0,
-      MODEL_SIZE,
-      MODEL_SIZE
-    );
+  const input = preprocess(imageData.data);
 
-  const input =
-    preprocess(imageData.data);
+  const tensor = new ort.Tensor(
+    "float32",
+    input,
+    [1, 3, MODEL_SIZE, MODEL_SIZE]
+  );
 
-  const tensor =
-    new ort.Tensor(
-      "float32",
-      input,
-      [1, 3, MODEL_SIZE, MODEL_SIZE]
-    );
-
-  const outputs =
-    await session.run({
-      images: tensor
-    });
+  const outputs = await session.run({
+    images: tensor
+  });
 
   drawBoxes(outputs.output0.cpuData);
 
-  const end =
-    performance.now();
+  // FPS
+  const now = performance.now();
+  const fps = Math.round(1000 / (now - lastTime));
+  lastTime = now;
 
-  const fps =
-    Math.round(1000 / (end - start));
-
-  fpsText.innerText =
-    `FPS: ${fps}`;
+  fpsText.innerText = `FPS: ${fps}`;
 
   requestAnimationFrame(detectFrame);
 }
 
+
+// =========================
+// 🧪 Preprocess
+// =========================
 function preprocess(data) {
 
-  const float32Data =
-    new Float32Array(
-      3 * MODEL_SIZE * MODEL_SIZE
-    );
+  const float32Data = new Float32Array(
+    3 * MODEL_SIZE * MODEL_SIZE
+  );
 
-  for (
-    let i = 0;
-    i < MODEL_SIZE * MODEL_SIZE;
-    i++
-  ) {
+  for (let i = 0; i < MODEL_SIZE * MODEL_SIZE; i++) {
 
     float32Data[i] =
       data[i * 4] / 255;
 
-    float32Data[
-      i + MODEL_SIZE * MODEL_SIZE
-    ] =
+    float32Data[i + MODEL_SIZE * MODEL_SIZE] =
       data[i * 4 + 1] / 255;
 
-    float32Data[
-      i + MODEL_SIZE * MODEL_SIZE * 2
-    ] =
+    float32Data[i + MODEL_SIZE * MODEL_SIZE * 2] =
       data[i * 4 + 2] / 255;
   }
 
   return float32Data;
 }
 
+
+// =========================
+// 🎯 Draw detections (VISION PRO STYLE)
+// =========================
 function drawBoxes(data) {
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -185,42 +176,45 @@ function drawBoxes(data) {
 
     if (score < 0.5) continue;
 
+    const x = x1 * scaleX;
+    const y = y1 * scaleY;
     const w = (x2 - x1) * scaleX;
     const h = (y2 - y1) * scaleY;
 
-    const x = x1 * scaleX;
-    const y = y1 * scaleY;
-
-    const label = `${classNames[classId] || classId}`;
+    const label = classNames[classId] || classId;
     const percent = (score * 100).toFixed(0);
 
-    // 🧊 floating card size
+    // 🥽 floating card size
     const boxW = 150;
     const boxH = 34;
 
     const cx = x + w / 2 - boxW / 2;
-    const cy = y - 45;
+    const cy = y - 55; // floating height
 
     drawGlassCard(ctx, cx, cy, boxW, boxH, label, percent);
 
-    // （可選）保留淡淡 bounding guide
-    ctx.strokeStyle = "rgba(0,255,200,0.25)";
+    // optional guide box
+    ctx.strokeStyle = "rgba(0,255,200,0.2)";
     ctx.lineWidth = 1;
     ctx.strokeRect(x, y, w, h);
   }
 }
 
+
+// =========================
+// 🧊 Vision Pro Glass Card
+// =========================
 function drawGlassCard(ctx, x, y, w, h, label, percent) {
 
   const r = 12;
 
   ctx.save();
 
-  // 🌟 glow
+  // glow
   ctx.shadowColor = "rgba(0,255,200,0.25)";
   ctx.shadowBlur = 20;
 
-  // 🧊 glass gradient
+  // glass gradient
   const g = ctx.createLinearGradient(x, y, x, y + h);
   g.addColorStop(0, "rgba(255,255,255,0.14)");
   g.addColorStop(1, "rgba(255,255,255,0.05)");
@@ -230,14 +224,14 @@ function drawGlassCard(ctx, x, y, w, h, label, percent) {
   roundRect(ctx, x, y, w, h, r);
   ctx.fill();
 
-  // border
+  // border glow
   ctx.strokeStyle = "rgba(0,255,200,0.35)";
   ctx.lineWidth = 1;
   ctx.stroke();
 
   ctx.restore();
 
-  // 🧠 text (Vision Pro style)
+  // text
   ctx.fillStyle = "rgba(255,255,255,0.9)";
   ctx.font = "13px -apple-system, BlinkMacSystemFont";
 
@@ -248,6 +242,10 @@ function drawGlassCard(ctx, x, y, w, h, label, percent) {
   );
 }
 
+
+// =========================
+// 🔲 rounded rect
+// =========================
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -262,14 +260,12 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+
+// =========================
+// 📦 Service Worker
+// =========================
 if ("serviceWorker" in navigator) {
-
   window.addEventListener("load", () => {
-
-    navigator.serviceWorker.register(
-      "./sw.js"
-    );
-
+    navigator.serviceWorker.register("./sw.js");
   });
-
 }
