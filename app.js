@@ -80,34 +80,27 @@ startBtn.onclick = async () => {
 async function detectFrame() {
   if (!session || !isDetecting) return;
 
-  const start = performance.now();
+  // 獲取原始視訊尺寸
+  const vW = video.videoWidth;
+  const vH = video.videoHeight;
 
-  // 1. 影像預處理：繪製到 640x640 的畫布
-  tempCtx.drawImage(video, 0, 0, MODEL_SIZE, MODEL_SIZE);
+  // 計算 crop 尺寸 (以短邊為主，模擬 cover 效果)
+  const size = Math.min(vW, vH);
+  const sx = (vW - size) / 2;
+  const sy = (vH - size) / 2;
+
+  // 將視訊中間的正方形區域繪製到 640x640 的暫存畫布上
+  tempCtx.drawImage(video, sx, sy, size, size, 0, 0, MODEL_SIZE, MODEL_SIZE);
+
   const imageData = tempCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE);
-
-  // 2. 轉換為 Tensor
   const input = preprocess(imageData.data);
   const tensor = new ort.Tensor("float32", input, [1, 3, MODEL_SIZE, MODEL_SIZE]);
 
-  try {
-    // 3. 執行推論
-    const outputs = await session.run({ images: tensor });
-    
-    // 注意：這裡假設你的模型輸出 key 為 'output0'
-    // 如果報錯，請 console.log(outputs) 檢查正確的 key 名稱
-    const outputData = outputs[Object.keys(outputs)[0]].cpuData;
+  const outputs = await session.run({ images: tensor });
+  const outputData = outputs[Object.keys(outputs)[0]].cpuData;
 
-    // 4. 繪圖
-    drawBoxes(outputData);
-
-  } catch (err) {
-    console.error("推論過程出錯:", err);
-  }
-
-  const end = performance.now();
-  const fps = Math.round(1000 / (end - start));
-  fpsText.innerText = `FPS: ${fps}`;
+  // 傳送 sx, sy, size 給繪圖函數進行反向計算
+  drawBoxes(outputData, sx, sy, size);
 
   requestAnimationFrame(detectFrame);
 }
@@ -124,79 +117,113 @@ function preprocess(data) {
 }
 
 function drawBoxes(data) {
+  // --- 關鍵修正：確保畫布解析度與顯示尺寸一致 ---
+  if (canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight) {
+    canvas.width = canvas.clientWidth;
+    canvas.height = canvas.clientHeight;
+  }
+
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   const videoW = video.videoWidth;
   const videoH = video.videoHeight;
-  const canvasW = canvas.clientWidth;
-  const canvasH = canvas.clientHeight;
+  const canvasW = canvas.width;
+  const canvasH = canvas.height;
 
+  // 1. 計算 object-fit: cover 的縮放比例與位移
+  // 這段邏輯必須與 CSS 的 object-fit 完全對應
   const scale = Math.max(canvasW / videoW, canvasH / videoH);
   const xOffset = (canvasW - videoW * scale) / 2;
   const yOffset = (canvasH - videoH * scale) / 2;
 
+  // YOLO 模型通常是將影像 Resize 到 640x640（不維持比例的拉伸）
   const modelScaleX = videoW / 640;
   const modelScaleY = videoH / 640;
 
   for (let i = 0; i < data.length; i += 6) {
     const score = data[i + 4];
-    if (score < 0.45) continue; // 稍微調低閾值讓反應更靈敏
+    if (score < 0.45) continue;
 
-    // 1. 座標轉換邏輯維持不變 (這是準確度的核心)
-    const x = (data[i] * modelScaleX) * scale + xOffset;
-    const y = (data[i + 1] * modelScaleY) * scale + yOffset;
-    const w = (data[i + 2] - data[i]) * modelScaleX * scale;
-    const h = (data[i + 3] - data[i + 1]) * modelScaleY * scale;
+    // 2. 座標轉換：從模型 640x640 -> 視訊原尺寸 -> 螢幕顯示尺寸
+    const x1 = data[i] * modelScaleX * scale + xOffset;
+    const y1 = data[i + 1] * modelScaleY * scale + yOffset;
+    const x2 = data[i + 2] * modelScaleX * scale + xOffset;
+    const y2 = data[i + 3] * modelScaleY * scale + yOffset;
+
+    const w = x2 - x1;
+    const h = y2 - y1;
 
     const classId = Math.round(data[i + 5]);
     const label = classNames[classId] || "Object";
-    
-    // --- VisionOS 視覺設計開始 ---
 
-    // 2. 設置發光與陰影
-    ctx.shadowBlur = 15;
-    ctx.shadowColor = "rgba(0, 0, 0, 0.5)";
+    // --- VisionOS 視覺設計 ---
     
-    // 3. 繪製主邊框 (使用白色或極淺綠)
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
-    ctx.lineWidth = 2.5;
-    ctx.lineJoin = "round";
-
-    // 繪製圓角矩形框 (VisionOS 核心元素)
-    drawRoundedRect(ctx, x, y, w, h, 12);
+    // 繪製外框陰影
+    ctx.save(); // 保存狀態以避免陰影污染其他繪圖
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "rgba(0, 0, 0, 0.4)";
+    
+    // 主圓角框 (白色半透明)
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.lineWidth = 2;
+    drawRoundedRect(ctx, x1, y1, w, h, 12);
     ctx.stroke();
+    ctx.restore();
 
-    // 4. 繪製「懸浮標籤」
-    const font = "600 14px -apple-system, system-ui, sans-serif";
+    // 懸浮標籤 (Glassmorphism)
+    const font = "600 13px -apple-system, BlinkMacSystemFont, sans-serif";
     ctx.font = font;
     const txt = `${label.toUpperCase()} ${Math.round(score * 100)}%`;
     const txtWidth = ctx.measureText(txt).width;
-    const padding = 10;
-    const rectW = txtWidth + padding * 2;
-    const rectH = 28;
-    const rectX = x;
-    const rectY = y - rectH - 8; // 向上偏移，增加呼吸感
+    
+    const labelW = txtWidth + 20;
+    const labelH = 26;
+    const labelX = x1;
+    const labelY = y1 - labelH - 10; // 懸浮高度
 
-    // 標籤背景：深色毛玻璃質感
-    ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
-    ctx.shadowBlur = 10;
-    drawRoundedRect(ctx, rectX, rectY, rectW, rectH, 14);
+    // 標籤背景
+    ctx.fillStyle = "rgba(20, 20, 20, 0.6)";
+    ctx.backdropFilter = "blur(10px)"; // 注意：目前僅部分瀏覽器支援 canvas backdropFilter
+    drawRoundedRect(ctx, labelX, labelY, labelW, labelH, 13);
     ctx.fill();
-
-    // 標籤亮邊 (微光效果)
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+    
+    // 標籤邊框
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // 5. 繪製文字
-    ctx.shadowBlur = 0; // 文字不需要陰影
-    ctx.fillStyle = "white";
+    // 標籤文字
+    ctx.fillStyle = "#ffffff";
     ctx.textBaseline = "middle";
-    ctx.fillText(txt, rectX + padding, rectY + rectH / 2);
+    ctx.fillText(txt, labelX + 10, labelY + labelH / 2 + 1);
 
-    // 6. 加分項：四角強化 (Corners)
-    drawCorners(ctx, x, y, w, h, 20);
+    // 四角裝飾 (這讓它看起來更像 AR 偵測)
+    drawVisionCorners(ctx, x1, y1, w, h, 15);
   }
+}
+
+// 輔助函式：VisionOS 風格轉角
+function drawVisionCorners(ctx, x, y, w, h, len) {
+  ctx.strokeStyle = "#00ff88"; // 使用你的主題綠色作為焦點
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+
+  // 左上
+  ctx.beginPath();
+  ctx.moveTo(x, y + len); ctx.lineTo(x, y); ctx.lineTo(x + len, y);
+  ctx.stroke();
+  // 右上
+  ctx.beginPath();
+  ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len);
+  ctx.stroke();
+  // 左下
+  ctx.beginPath();
+  ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h);
+  ctx.stroke();
+  // 右下
+  ctx.beginPath();
+  ctx.moveTo(x + w - len, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - len);
+  ctx.stroke();
 }
 
 /**
