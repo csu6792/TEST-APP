@@ -1,28 +1,20 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
-
 <head>
   <meta charset="UTF-8">
-  <!-- 確保在行動裝置上縮放正確且禁止使用者手動縮放（增加 App 感） -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-
-  <meta name="theme-color" content="#00ff88">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-
-  <link rel="manifest" href="manifest.json">
-
-  <title>YOLO AI Vision</title>
-
-  <!-- 引入 ONNX Runtime Web -->
+  <title>Vision AI | Spatial Computing</title>
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
 
   <style>
     :root {
-      --primary: #00ff88;
-      --bg-dark: #0a0a0a;
-      --glass: rgba(255, 255, 255, 0.1);
-      --font-main: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      /* Apple Vision Pro 特有的半透明玻璃色值 */
+      --glass-bg: rgba(255, 255, 255, 0.12);
+      --glass-border: rgba(255, 255, 255, 0.25);
+      --vibrant-green: #00ff88;
+      --system-white: rgba(255, 255, 255, 0.94);
     }
 
     * {
@@ -34,185 +26,190 @@
 
     body {
       width: 100vw;
-      height: 100dvh; /* 使用動態視窗高度 */
-      overflow: hidden;
-      background: var(--bg-dark);
-      font-family: var(--font-main);
-      color: white;
-    }
-
-    /* 主容器 */
-    .app {
-      width: 100%;
-      height: 100%;
-      position: relative;
-      display: flex;
-      flex-direction: column;
-    }
-
-    /* 頂部導覽列：毛玻璃 + 安全區域 */
-    .header {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      padding: calc(env(safe-area-inset-top) + 15px) 20px 20px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      z-index: 100;
-      background: linear-gradient(to bottom, rgba(0, 0, 0, 0.7) 0%, transparent 100%);
-    }
-
-    .brand {
-      font-size: 1.2rem;
-      font-weight: 800;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-    }
-
-    .brand span {
-      color: var(--primary);
-    }
-
-    #fps {
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 0.85rem;
-      background: var(--glass);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      padding: 6px 12px;
-      border-radius: 20px;
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
-    }
-
-    /* 相機容器：全螢幕 RWD */
-    .camera-container {
-      flex: 1;
-      position: relative;
-      width: 100%;
-      height: 100%;
+      height: 100dvh;
       overflow: hidden;
       background: #000;
+      font-family: -apple-system, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
+      color: var(--system-white);
+    }
+
+    /* 背景相機層 */
+    .camera-view {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
     }
 
     video {
       width: 100%;
       height: 100%;
-      object-fit: cover; /* 確保畫面填滿不留黑邊 */
+      object-fit: cover;
     }
 
+    /* 懸浮 AR 繪圖層 */
     canvas {
       position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      object-fit: cover; /* 畫布縮放邏輯必須與 video 一致 */
-      pointer-events: none;
-      z-index: 5;
-    }
-
-    /* 掃描線特效 */
-    .scan-line {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 3px;
-      background: linear-gradient(90deg, transparent, var(--primary), transparent);
-      box-shadow: 0 0 15px var(--primary);
-      animation: scan 4s linear infinite;
-      opacity: 0.6;
-      z-index: 10;
+      inset: 0;
+      z-index: 2;
       pointer-events: none;
     }
 
-    @keyframes scan {
-      0% { top: 0%; }
-      100% { top: 100%; }
+    /* VisionOS 玻璃容器基板 */
+    .glass-panel {
+      background: var(--glass-bg);
+      backdrop-filter: blur(25px) saturate(180%);
+      -webkit-backdrop-filter: blur(25px) saturate(180%);
+      border: 1px solid var(--glass-border);
+      border-radius: 40px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 
+                  inset 0 0 0 0.5px rgba(255, 255, 255, 0.2);
     }
 
-    /* 底部操作區：適配底部安全區域（如 iPhone 小白條） */
-    .bottom-ui {
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      width: 100%;
-      padding: 40px 25px calc(env(safe-area-inset-bottom) + 20px);
-      background: linear-gradient(to top, rgba(0, 0, 0, 0.8) 0%, transparent 100%);
+    /* 頂部導覽列：懸浮膠囊樣式 */
+    .header {
+      position: fixed;
+      top: calc(env(safe-area-inset-top) + 15px);
+      left: 50%;
+      transform: translateX(-50%);
+      width: 90%;
+      max-width: 500px;
+      height: 54px;
       display: flex;
-      flex-direction: column;
+      justify-content: space-between;
       align-items: center;
-      gap: 15px;
+      padding: 0 24px;
       z-index: 100;
     }
 
-    .status-msg {
-      font-size: 0.8rem;
-      color: rgba(255, 255, 255, 0.7);
-      text-transform: uppercase;
-      letter-spacing: 1px;
+    .brand {
+      font-size: 1rem;
+      font-weight: 600;
+      letter-spacing: -0.2px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
 
+    .brand .dot {
+      width: 8px;
+      height: 8px;
+      background: var(--vibrant-green);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--vibrant-green);
+    }
+
+    #fps {
+      font-size: 0.8rem;
+      font-weight: 500;
+      opacity: 0.8;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* 底部控制區域 */
+    .bottom-controls {
+      position: fixed;
+      bottom: calc(env(safe-area-inset-bottom) + 30px);
+      left: 50%;
+      transform: translateX(-50%);
+      width: 90%;
+      max-width: 400px;
+      padding: 24px;
+      z-index: 100;
+      text-align: center;
+    }
+
+    .status-msg {
+      font-size: 0.85rem;
+      font-weight: 400;
+      margin-bottom: 20px;
+      letter-spacing: -0.1px;
+      color: rgba(255, 255, 255, 0.6);
+    }
+
+    /* Vision Pro 按鈕風格：純白高亮感 */
     #startBtn {
       width: 100%;
-      max-width: 320px;
-      height: 58px;
+      height: 56px;
       border: none;
-      border-radius: 29px;
-      background: var(--primary);
+      border-radius: 28px;
+      background: white; /* VisionOS 主按鈕通常是全白或高亮玻璃 */
       color: #000;
-      font-size: 1.1rem;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      box-shadow: 0 10px 25px rgba(0, 255, 136, 0.4);
-      transition: all 0.2s ease;
+      font-size: 1rem;
+      font-weight: 600;
       cursor: pointer;
-    }
-
-    #startBtn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 12px 30px rgba(0, 255, 136, 0.5);
+      transition: all 0.3s cubic-bezier(0.2, 0, 0, 1);
+      box-shadow: 0 4px 20px rgba(255, 255, 255, 0.2);
     }
 
     #startBtn:active {
-      transform: scale(0.96);
+      transform: scale(0.94);
+      background: rgba(255, 255, 255, 0.8);
     }
 
     #startBtn:disabled {
-      background: #333;
-      color: #777;
-      box-shadow: none;
+      background: rgba(255, 255, 255, 0.1);
+      color: rgba(255, 255, 255, 0.3);
       cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    /* 柔和的空間掃描動畫 */
+    .spatial-grid {
+      position: fixed;
+      inset: 0;
+      background-image: 
+        radial-gradient(circle at 2px 2px, rgba(255,255,255,0.05) 1px, transparent 0);
+      background-size: 40px 40px;
+      z-index: 3;
+      pointer-events: none;
+      opacity: 0.5;
+    }
+
+    /* 懸浮指示線 */
+    .indicator {
+      position: absolute;
+      width: 100%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+      z-index: 4;
+      animation: float 6s ease-in-out infinite;
+    }
+
+    @keyframes float {
+      0%, 100% { top: 30%; opacity: 0; }
+      50% { top: 70%; opacity: 1; }
     }
   </style>
 </head>
 
 <body>
-
-  <div class="app">
-    <header class="header">
-      <div class="brand">Yolo<span>Vision</span></div>
-      <div id="fps">FPS: 0</div>
-    </header>
-
-    <main class="camera-container">
-      <!-- playsinline 很重要，防止 iPhone 自動全螢幕播放 -->
-      <video id="video" autoplay playsinline muted></video>
-      <canvas id="canvas"></canvas>
-      <div class="scan-line"></div>
-    </main>
-
-    <footer class="bottom-ui">
-      <div class="status-msg" id="statusText">正在初始化 AI 模型...</div>
-      <button id="startBtn" disabled>請稍候</button>
-    </footer>
+  <!-- 1. 環境背景 -->
+  <div class="camera-view">
+    <video id="video" autoplay playsinline muted></video>
   </div>
 
+  <!-- 2. 空間網格感 -->
+  <div class="spatial-grid"></div>
+  <div class="indicator"></div>
+
+  <!-- 3. AR 偵測圖層 -->
+  <canvas id="canvas"></canvas>
+
+  <!-- 4. visionOS 懸浮 Header -->
+  <header class="header glass-panel">
+    <div class="brand">
+      <div class="dot"></div>
+      Spatial Vision
+    </div>
+    <div id="fps">FPS: 0</div>
+  </header>
+
+  <!-- 5. visionOS 控制面板 -->
+  <footer class="bottom-controls glass-panel">
+    <div class="status-msg" id="statusText">正在搜尋空間模型...</div>
+    <button id="startBtn" disabled>開始空間偵測</button>
+  </footer>
+
   <script src="app.js"></script>
-
 </body>
-
 </html>
