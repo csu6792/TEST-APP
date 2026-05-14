@@ -180,47 +180,42 @@ function drawBoxes(data) {
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const scaleX = canvas.width / MODEL_SIZE;
-  const scaleY = canvas.height / MODEL_SIZE;
+  const scale = canvas.width / MODEL_SIZE;
 
   for (let i = 0; i < data.length; i += 6) {
 
-    let x1 = data[i];
-    let y1 = data[i + 1];
-    let x2 = data[i + 2];
-    let y2 = data[i + 3];
+    const x1 = data[i];
+    const y1 = data[i + 1];
+    const x2 = data[i + 2];
+    const y2 = data[i + 3];
 
     const score = data[i + 4];
     const classId = Math.round(data[i + 5]);
 
     if (score < 0.5) continue;
 
-    // 🧠 inverse letterbox correction
-    x1 = (x1 - offsetX) / scale;
-    y1 = (y1 - offsetY) / scale;
-    x2 = (x2 - offsetX) / scale;
-    y2 = (y2 - offsetY) / scale;
+    const x = x1 * scale;
+    const y = y1 * scale;
+    const w = (x2 - x1) * scale;
+    const h = (y2 - y1) * scale;
 
-    const x = x1 * scaleX;
-    const y = y1 * scaleY;
-    const w = (x2 - x1) * scaleX;
-    const h = (y2 - y1) * scaleY;
+    ctx.strokeStyle = "#00ff88";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x, y, w, h);
+
+    ctx.fillStyle = "#00ff88";
+    ctx.font = "18px Arial";
 
     const label = classNames[classId] || classId;
-    const percent = (score * 100).toFixed(0);
 
-    const boxW = 150;
-    const boxH = 34;
+    ctx.fillRect(x, y - 30, 140, 30);
 
-    const cx = x + w / 2 - boxW / 2;
-    const cy = y - 55;
-
-    drawGlassCard(ctx, cx, cy, boxW, boxH, label, percent);
-
-    // optional guide
-    ctx.strokeStyle = "rgba(0,255,200,0.2)";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = "black";
+    ctx.fillText(
+      `${label} ${score.toFixed(2)}`,
+      x + 5,
+      y - 8
+    );
   }
 }
 
