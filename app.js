@@ -131,45 +131,113 @@ function drawBoxes(data) {
   const canvasW = canvas.clientWidth;
   const canvasH = canvas.clientHeight;
 
-  // 計算 object-fit: cover 的縮放比例
   const scale = Math.max(canvasW / videoW, canvasH / videoH);
   const xOffset = (canvasW - videoW * scale) / 2;
   const yOffset = (canvasH - videoH * scale) / 2;
 
-  // YOLO 模型輸入為 640x640
   const modelScaleX = videoW / 640;
   const modelScaleY = videoH / 640;
 
   for (let i = 0; i < data.length; i += 6) {
     const score = data[i + 4];
-    if (score < 0.5) continue;
+    if (score < 0.45) continue; // 稍微調低閾值讓反應更靈敏
 
-    // 1. 還原回視訊原始像素座標
-    const origX1 = data[i] * modelScaleX;
-    const origY1 = data[i + 1] * modelScaleY;
-    const origX2 = data[i + 2] * modelScaleX;
-    const origY2 = data[i + 3] * modelScaleY;
+    // 1. 座標轉換邏輯維持不變 (這是準確度的核心)
+    const x = (data[i] * modelScaleX) * scale + xOffset;
+    const y = (data[i + 1] * modelScaleY) * scale + yOffset;
+    const w = (data[i + 2] - data[i]) * modelScaleX * scale;
+    const h = (data[i + 3] - data[i + 1]) * modelScaleY * scale;
 
-    // 2. 轉換為螢幕顯示座標（加上 Offset 與 Scale）
-    const x = origX1 * scale + xOffset;
-    const y = origY1 * scale + yOffset;
-    const w = (origX2 - origX1) * scale;
-    const h = (origY2 - origY1) * scale;
-
-    // 3. 繪製科技感偵測框
-    ctx.strokeStyle = "#00ff88";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(x, y, w, h);
-
-    // 繪製標籤背景
-    ctx.fillStyle = "#00ff88";
-    const label = classNames[Math.round(data[i+5])] || "OBJ";
-    const txt = `${label} ${Math.round(score * 100)}%`;
-    ctx.font = "bold 14px Arial";
-    const txtWidth = ctx.measureText(txt).width;
+    const classId = Math.round(data[i + 5]);
+    const label = classNames[classId] || "Object";
     
-    ctx.fillRect(x, y - 25, txtWidth + 10, 25);
-    ctx.fillStyle = "black";
-    ctx.fillText(txt, x + 5, y - 7);
+    // --- VisionOS 視覺設計開始 ---
+
+    // 2. 設置發光與陰影
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = "rgba(0, 0, 0, 0.5)";
+    
+    // 3. 繪製主邊框 (使用白色或極淺綠)
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = "round";
+
+    // 繪製圓角矩形框 (VisionOS 核心元素)
+    drawRoundedRect(ctx, x, y, w, h, 12);
+    ctx.stroke();
+
+    // 4. 繪製「懸浮標籤」
+    const font = "600 14px -apple-system, system-ui, sans-serif";
+    ctx.font = font;
+    const txt = `${label.toUpperCase()} ${Math.round(score * 100)}%`;
+    const txtWidth = ctx.measureText(txt).width;
+    const padding = 10;
+    const rectW = txtWidth + padding * 2;
+    const rectH = 28;
+    const rectX = x;
+    const rectY = y - rectH - 8; // 向上偏移，增加呼吸感
+
+    // 標籤背景：深色毛玻璃質感
+    ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+    ctx.shadowBlur = 10;
+    drawRoundedRect(ctx, rectX, rectY, rectW, rectH, 14);
+    ctx.fill();
+
+    // 標籤亮邊 (微光效果)
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // 5. 繪製文字
+    ctx.shadowBlur = 0; // 文字不需要陰影
+    ctx.fillStyle = "white";
+    ctx.textBaseline = "middle";
+    ctx.fillText(txt, rectX + padding, rectY + rectH / 2);
+
+    // 6. 加分項：四角強化 (Corners)
+    drawCorners(ctx, x, y, w, h, 20);
   }
+}
+
+/**
+ * 輔助函數：畫圓角矩形
+ */
+function drawRoundedRect(ctx, x, y, w, h, r) {
+  if (w < 2 * r) r = w / 2;
+  if (h < 2 * r) r = h / 2;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/**
+ * 輔助函數：繪製 VisionOS 感的四角強化線段
+ */
+function drawCorners(ctx, x, y, w, h, len) {
+  ctx.strokeStyle = "rgba(0, 255, 136, 1)"; // 轉角使用主題綠色
+  ctx.lineWidth = 4;
+  
+  // 左上
+  ctx.beginPath();
+  ctx.moveTo(x, y + len); ctx.lineTo(x, y); ctx.lineTo(x + len, y);
+  ctx.stroke();
+  
+  // 右上
+  ctx.beginPath();
+  ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len);
+  ctx.stroke();
+  
+  // 左下
+  ctx.beginPath();
+  ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h);
+  ctx.stroke();
+  
+  // 右下
+  ctx.beginPath();
+  ctx.moveTo(x + w - len, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - len);
+  ctx.stroke();
 }
