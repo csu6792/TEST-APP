@@ -10,6 +10,10 @@ let session = null;
 let modelReady = false;
 let isRunning = false;
 
+let scale = 1;
+let offsetX = 0;
+let offsetY = 0;
+
 let lastTime = performance.now();
 
 const classNames = [
@@ -86,22 +90,40 @@ async function detectFrame() {
     return;
   }
 
-  const start = performance.now();
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
 
-  // temp canvas
+  // 🧠 letterbox scale
+  scale = Math.min(MODEL_SIZE / vw, MODEL_SIZE / vh);
+
+  const dw = vw * scale;
+  const dh = vh * scale;
+
+  offsetX = (MODEL_SIZE - dw) / 2;
+  offsetY = (MODEL_SIZE - dh) / 2;
+
+  // 🖼 temp canvas
   const tempCanvas = document.createElement("canvas");
   tempCanvas.width = MODEL_SIZE;
   tempCanvas.height = MODEL_SIZE;
 
   const tempCtx = tempCanvas.getContext("2d");
 
-  tempCtx.drawImage(video, 0, 0, MODEL_SIZE, MODEL_SIZE);
+  // background (padding)
+  tempCtx.fillStyle = "black";
+  tempCtx.fillRect(0, 0, MODEL_SIZE, MODEL_SIZE);
+
+  // draw letterboxed video
+  tempCtx.drawImage(
+    video,
+    0, 0, vw, vh,
+    offsetX, offsetY,
+    dw, dh
+  );
 
   const imageData = tempCtx.getImageData(
-    0,
-    0,
-    MODEL_SIZE,
-    MODEL_SIZE
+    0, 0,
+    MODEL_SIZE, MODEL_SIZE
   );
 
   const input = preprocess(imageData.data);
@@ -118,12 +140,9 @@ async function detectFrame() {
 
   drawBoxes(outputs.output0.cpuData);
 
-  // FPS
   const now = performance.now();
-  const fps = Math.round(1000 / (now - lastTime));
+  fpsText.innerText = `FPS: ${Math.round(1000 / (now - lastTime))}`;
   lastTime = now;
-
-  fpsText.innerText = `FPS: ${fps}`;
 
   requestAnimationFrame(detectFrame);
 }
@@ -166,15 +185,21 @@ function drawBoxes(data) {
 
   for (let i = 0; i < data.length; i += 6) {
 
-    const x1 = data[i];
-    const y1 = data[i + 1];
-    const x2 = data[i + 2];
-    const y2 = data[i + 3];
+    let x1 = data[i];
+    let y1 = data[i + 1];
+    let x2 = data[i + 2];
+    let y2 = data[i + 3];
 
     const score = data[i + 4];
     const classId = Math.round(data[i + 5]);
 
     if (score < 0.5) continue;
+
+    // 🧠 inverse letterbox correction
+    x1 = (x1 - offsetX) / scale;
+    y1 = (y1 - offsetY) / scale;
+    x2 = (x2 - offsetX) / scale;
+    y2 = (y2 - offsetY) / scale;
 
     const x = x1 * scaleX;
     const y = y1 * scaleY;
@@ -184,16 +209,15 @@ function drawBoxes(data) {
     const label = classNames[classId] || classId;
     const percent = (score * 100).toFixed(0);
 
-    // 🥽 floating card size
     const boxW = 150;
     const boxH = 34;
 
     const cx = x + w / 2 - boxW / 2;
-    const cy = y - 55; // floating height
+    const cy = y - 55;
 
     drawGlassCard(ctx, cx, cy, boxW, boxH, label, percent);
 
-    // optional guide box
+    // optional guide
     ctx.strokeStyle = "rgba(0,255,200,0.2)";
     ctx.lineWidth = 1;
     ctx.strokeRect(x, y, w, h);
