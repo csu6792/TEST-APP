@@ -4,145 +4,40 @@
 <head>
 
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <meta name="theme-color" content="#00ff88">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
 
-  <link rel="manifest" href="manifest.json">
+  <meta
+    name="theme-color"
+    content="#00ff88"
+  >
+
+  <meta
+    name="apple-mobile-web-app-capable"
+    content="yes"
+  >
+
+  <meta
+    name="apple-mobile-web-app-status-bar-style"
+    content="black-translucent"
+  >
+
+  <link
+    rel="manifest"
+    href="manifest.json"
+  >
 
   <title>YOLO AI</title>
 
+  <link
+    rel="stylesheet"
+    href="style.css"
+  >
+
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
-
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
-    body {
-      width: 100vw;
-      height: 100dvh;
-      overflow: hidden;
-      background: #000;
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
-    }
-
-    .app {
-      width: 100%;
-      height: 100%;
-      position: relative;
-    }
-
-    /* ✅ FIX 1: camera container（重要） */
-    .camera-container {
-      width: 100%;
-      height: 100%;
-      position: relative;
-      overflow: hidden;
-    }
-
-    video {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      filter: contrast(1.08) saturate(1.15) brightness(0.95);
-    }
-
-    canvas {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-    }
-
-    /* 🥽 topbar glass（修好） */
-    .topbar {
-      position: fixed;
-      top: 18px;
-      left: 50%;
-      transform: translateX(-50%);
-
-      padding: 10px 18px;
-
-      color: rgba(255,255,255,0.85);
-      font-size: 13px;
-      letter-spacing: 0.4px;
-
-      z-index: 100;
-
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.12);
-      backdrop-filter: blur(20px);
-      border-radius: 999px;
-    }
-
-    .bottom-ui {
-      position: fixed;
-      bottom: 22px;
-      left: 50%;
-      transform: translateX(-50%);
-
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 10px;
-
-      z-index: 100;
-    }
-
-    #startBtn {
-      width: 72px;
-      height: 72px;
-
-      border-radius: 50%;
-      border: none;
-
-      background: radial-gradient(circle at 30% 30%,
-        rgba(0, 255, 170, 1),
-        rgba(0, 120, 255, 0.9)
-      );
-
-      box-shadow:
-        0 0 0 1px rgba(255,255,255,0.15),
-        0 10px 35px rgba(0,0,0,0.5),
-        0 0 30px rgba(0,255,170,0.25);
-
-      transition: transform 0.15s ease, box-shadow 0.3s ease;
-    }
-
-    #startBtn:active {
-      transform: scale(0.88);
-    }
-
-    #fps {
-      padding: 6px 12px;
-
-      font-size: 12px;
-      color: rgba(255,255,255,0.75);
-
-      border-radius: 999px;
-
-      background: rgba(255,255,255,0.05);
-      border: 1px solid rgba(255,255,255,0.12);
-
-      backdrop-filter: blur(18px);
-    }
-
-    .app::before {
-      content: "";
-      position: absolute;
-      inset: 0;
-
-      background:
-        radial-gradient(circle at 50% 30%, rgba(0,255,180,0.08), transparent 40%),
-        radial-gradient(circle at 70% 70%, rgba(0,120,255,0.06), transparent 45%);
-
-      pointer-events: none;
-    }
-  </style>
 
 </head>
 
@@ -154,10 +49,14 @@
       YOLO AI Detection
     </div>
 
-    <!-- ✅ FIX 2: camera container 正確包 video + canvas -->
     <div class="camera-container">
 
-      <video id="video" autoplay playsinline muted></video>
+      <video
+        id="video"
+        autoplay
+        playsinline
+        muted
+      ></video>
 
       <canvas id="canvas"></canvas>
 
@@ -165,9 +64,13 @@
 
     <div class="bottom-ui">
 
-      <button id="startBtn">開始偵測</button>
+      <button id="startBtn">
+        開始偵測
+      </button>
 
-      <div id="fps">FPS: 0</div>
+      <div id="fps">
+        FPS: 0
+      </div>
 
     </div>
 
