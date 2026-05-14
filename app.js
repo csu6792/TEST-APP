@@ -1,117 +1,101 @@
-import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0-alpha.19';
+const upload = document.getElementById("upload");
+const image = document.getElementById("image");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
 
-// 取得 UI 元件
-const status = document.getElementById('status');
-const video = document.getElementById('video');
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
+let session;
 
-let detector;
+async function loadModel() {
 
-/**
- * 1. 初始化環境與模型
- */
-async function init() {
-    try {
-        status.innerText = "⏳ 正在初始化環境...";
+  session = await ort.InferenceSession.create(
+    "./model/yolo26n.onnx"
+  );
 
-        // 設定模型搜尋路徑（指向根目錄）
-        env.allowLocalModels = true;
-        env.allowRemoteModels = false;
-        env.localModelPath = './';
-
-        // 修正：安全地設定 WASM 路徑，避免 undefined 錯誤
-        if (env.onnx && env.onnx.wasm) {
-            env.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/';
-        } else if (env.backends && env.backends.onnx) {
-            env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/';
-        }
-
-        status.innerText = "⏳ 載入 YOLOv10 模型 (9MB)...";
-
-        // 載入模型：確保根目錄有 model.onnx, config.json, preprocessor_config.json
-        detector = await pipeline('object-detection', './', {
-            device: 'wasm',
-            model: 'model.onnx',
-            config: 'config.json',
-            processor: 'preprocessor_config.json'
-        });
-
-        status.innerText = "✅ 模型就緒，啟動相機...";
-        await startCamera();
-    } catch (err) {
-        console.error("初始化失敗:", err);
-        status.style.color = "red";
-        status.innerText = "❌ 失敗: " + err.message;
-    }
+  console.log("model loaded");
 }
 
-/**
- * 2. 啟動相機
- */
-async function startCamera() {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { 
-                facingMode: 'environment', // 優先使用後鏡頭
-                width: { ideal: 640 },
-                height: { ideal: 640 }
-            },
-            audio: false
-        });
-        
-        video.srcObject = stream;
-        await video.play();
+loadModel();
 
-        // 調整 Canvas 大小與影片一致
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+upload.addEventListener("change", async (e) => {
 
-        render();
-    } catch (err) {
-        status.innerText = "❌ 無法啟動相機: " + err.message;
-    }
+  const file = e.target.files[0];
+
+  image.src = URL.createObjectURL(file);
+
+  image.onload = async () => {
+
+    detect(image);
+
+  };
+
+});
+
+async function detect(img) {
+
+  const size = 640;
+
+  canvas.width = img.width;
+  canvas.height = img.height;
+
+  const tempCanvas = document.createElement("canvas");
+  tempCanvas.width = size;
+  tempCanvas.height = size;
+
+  const tempCtx = tempCanvas.getContext("2d");
+
+  tempCtx.drawImage(img, 0, 0, size, size);
+
+  const imageData = tempCtx.getImageData(0, 0, size, size);
+
+  const input = preprocessing(imageData.data, size);
+
+  const tensor = new ort.Tensor(
+    "float32",
+    input,
+    [1, 3, size, size]
+  );
+
+  const outputs = await session.run({
+    images: tensor
+  });
+
+  console.log(outputs);
+
+  drawDemoBox();
+
 }
 
-/**
- * 3. 偵測與繪圖迴圈
- */
-async function render() {
-    if (detector && video.readyState >= 2) {
-        try {
-            // 執行 YOLOv10 推論
-            const results = await detector(video);
+function preprocessing(data, size) {
 
-            // 清除畫布
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const float32Data = new Float32Array(
+    3 * size * size
+  );
 
-            // 繪製結果
-            results.forEach(obj => {
-                const { xmin, ymin, xmax, ymax } = obj.box;
-                
-                // 畫框
-                ctx.strokeStyle = '#00FF00';
-                ctx.lineWidth = 3;
-                ctx.strokeRect(xmin, ymin, xmax - xmin, ymax - ymin);
+  for (let i = 0; i < size * size; i++) {
 
-                // 畫標籤背景
-                ctx.fillStyle = '#00FF00';
-                const label = `${obj.label} ${Math.round(obj.score * 100)}%`;
-                const textWidth = ctx.measureText(label).width;
-                ctx.fillRect(xmin, ymin > 20 ? ymin - 20 : ymin, textWidth + 10, 20);
+    float32Data[i] =
+      data[i * 4] / 255;
 
-                // 寫文字
-                ctx.fillStyle = '#000000';
-                ctx.font = '14px sans-serif';
-                ctx.fillText(label, xmin + 5, ymin > 20 ? ymin - 5 : ymin + 15);
-            });
-        } catch (inferenceErr) {
-            console.error("推論出錯:", inferenceErr);
-        }
-    }
-    // 持續執行
-    requestAnimationFrame(render);
+    float32Data[i + size * size] =
+      data[i * 4 + 1] / 255;
+
+    float32Data[i + size * size * 2] =
+      data[i * 4 + 2] / 255;
+  }
+
+  return float32Data;
 }
 
-// 啟動程式
-init();
+function drawDemoBox() {
+
+  ctx.strokeStyle = "red";
+  ctx.lineWidth = 3;
+
+  ctx.strokeRect(
+    100,
+    100,
+    200,
+    200
+  );
+
+}
