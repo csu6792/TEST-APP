@@ -31,19 +31,31 @@ const classNames = [
 ];
 
 async function loadModel() {
+  // 顯示正在載入的文字（可選）
+  startBtn.innerText = "Loading Model...";
 
   ort.env.wasm.wasmPaths =
     "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
 
-  session =
-    await ort.InferenceSession.create(
+  try {
+    session = await ort.InferenceSession.create(
       "./model/yolo26n.onnx",
       {
         executionProviders: ["wasm"]
       }
     );
 
-  console.log("model loaded");
+    console.log("model loaded");
+
+    // --- 關鍵修改點 ---
+    startBtn.disabled = false;     // 啟用按鈕
+    startBtn.innerText = "Start Camera"; // 改回原本的文字
+    // -----------------
+
+  } catch (e) {
+    console.error("模型載入失敗:", e);
+    startBtn.innerText = "Model Load Failed";
+  }
 }
 
 loadModel();
