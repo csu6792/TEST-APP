@@ -168,80 +168,98 @@ function preprocess(data) {
 
 function drawBoxes(data) {
 
-  ctx.clearRect(
-    0,
-    0,
-    canvas.width,
-    canvas.height
-  );
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const scaleX =
-    canvas.width / MODEL_SIZE;
+  const scaleX = canvas.width / MODEL_SIZE;
+  const scaleY = canvas.height / MODEL_SIZE;
 
-  const scaleY =
-    canvas.height / MODEL_SIZE;
-
-  for (
-    let i = 0;
-    i < data.length;
-    i += 6
-  ) {
+  for (let i = 0; i < data.length; i += 6) {
 
     const x1 = data[i];
     const y1 = data[i + 1];
     const x2 = data[i + 2];
     const y2 = data[i + 3];
 
-    const score =
-      data[i + 4];
+    const score = data[i + 4];
+    const classId = Math.round(data[i + 5]);
 
-    const classId =
-      Math.round(data[i + 5]);
+    if (score < 0.5) continue;
 
-    if (score < 0.5)
-      continue;
+    const w = (x2 - x1) * scaleX;
+    const h = (y2 - y1) * scaleY;
 
-    const w = x2 - x1;
-    const h = y2 - y1;
+    const x = x1 * scaleX;
+    const y = y1 * scaleY;
 
-    ctx.strokeStyle =
-      "#00ff88";
+    const label = `${classNames[classId] || classId}`;
+    const percent = (score * 100).toFixed(0);
 
-    ctx.lineWidth = 3;
+    // 🧊 floating card size
+    const boxW = 150;
+    const boxH = 34;
 
-    ctx.strokeRect(
-      x1 * scaleX,
-      y1 * scaleY,
-      w * scaleX,
-      h * scaleY
-    );
+    const cx = x + w / 2 - boxW / 2;
+    const cy = y - 45;
 
-    ctx.fillStyle =
-      "#00ff88";
+    drawGlassCard(ctx, cx, cy, boxW, boxH, label, percent);
 
-    ctx.font =
-      "18px Arial";
-
-    const label =
-      `${classNames[classId] || classId}
-      ${score.toFixed(2)}`;
-
-    ctx.fillRect(
-      x1 * scaleX,
-      y1 * scaleY - 30,
-      140,
-      30
-    );
-
-    ctx.fillStyle =
-      "black";
-
-    ctx.fillText(
-      label,
-      x1 * scaleX + 5,
-      y1 * scaleY - 8
-    );
+    // （可選）保留淡淡 bounding guide
+    ctx.strokeStyle = "rgba(0,255,200,0.25)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, w, h);
   }
+}
+
+function drawGlassCard(ctx, x, y, w, h, label, percent) {
+
+  const r = 12;
+
+  ctx.save();
+
+  // 🌟 glow
+  ctx.shadowColor = "rgba(0,255,200,0.25)";
+  ctx.shadowBlur = 20;
+
+  // 🧊 glass gradient
+  const g = ctx.createLinearGradient(x, y, x, y + h);
+  g.addColorStop(0, "rgba(255,255,255,0.14)");
+  g.addColorStop(1, "rgba(255,255,255,0.05)");
+
+  ctx.fillStyle = g;
+
+  roundRect(ctx, x, y, w, h, r);
+  ctx.fill();
+
+  // border
+  ctx.strokeStyle = "rgba(0,255,200,0.35)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.restore();
+
+  // 🧠 text (Vision Pro style)
+  ctx.fillStyle = "rgba(255,255,255,0.9)";
+  ctx.font = "13px -apple-system, BlinkMacSystemFont";
+
+  ctx.fillText(
+    `${label} ${percent}%`,
+    x + 10,
+    y + 22
+  );
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
 }
 
 if ("serviceWorker" in navigator) {
