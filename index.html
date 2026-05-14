@@ -2,207 +2,213 @@
 <html lang="zh-TW">
 
 <head>
-
   <meta charset="UTF-8">
+  <!-- 確保在行動裝置上縮放正確且禁止使用者手動縮放（增加 App 感） -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
-  >
+  <meta name="theme-color" content="#00ff88">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
-  <meta
-    name="theme-color"
-    content="#00ff88"
-  >
+  <link rel="manifest" href="manifest.json">
 
-  <meta
-    name="apple-mobile-web-app-capable"
-    content="yes"
-  >
+  <title>YOLO AI Vision</title>
 
-  <meta
-    name="apple-mobile-web-app-status-bar-style"
-    content="black-translucent"
-  >
-
-  <link
-    rel="manifest"
-    href="manifest.json"
-  >
-
-  <title>YOLO AI</title>
-
-  <!--<link
-    rel="stylesheet"
-    href="style.css"
-  >-->
-
+  <!-- 引入 ONNX Runtime Web -->
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
-<style>
-  * {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
 
-body {
+  <style>
+    :root {
+      --primary: #00ff88;
+      --bg-dark: #0a0a0a;
+      --glass: rgba(255, 255, 255, 0.1);
+      --font-main: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
 
-  width: 100vw;
-  height: 100vh;
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
 
-  overflow: hidden;
+    body {
+      width: 100vw;
+      height: 100dvh; /* 使用動態視窗高度 */
+      overflow: hidden;
+      background: var(--bg-dark);
+      font-family: var(--font-main);
+      color: white;
+    }
 
-  background: black;
+    /* 主容器 */
+    .app {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
 
-  font-family: Arial;
-}
+    /* 頂部導覽列：毛玻璃 + 安全區域 */
+    .header {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      padding: calc(env(safe-area-inset-top) + 15px) 20px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 100;
+      background: linear-gradient(to bottom, rgba(0, 0, 0, 0.7) 0%, transparent 100%);
+    }
 
-.app {
+    .brand {
+      font-size: 1.2rem;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
 
-  width: 100%;
-  height: 100%;
+    .brand span {
+      color: var(--primary);
+    }
 
-  position: relative;
-}
+    #fps {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.85rem;
+      background: var(--glass);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      padding: 6px 12px;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    }
 
-.topbar {
+    /* 相機容器：全螢幕 RWD */
+    .camera-container {
+      flex: 1;
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
 
-  position: fixed;
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover; /* 確保畫面填滿不留黑邊 */
+    }
 
-  top: 0;
-  left: 0;
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover; /* 畫布縮放邏輯必須與 video 一致 */
+      pointer-events: none;
+      z-index: 5;
+    }
 
-  width: 100%;
+    /* 掃描線特效 */
+    .scan-line {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 3px;
+      background: linear-gradient(90deg, transparent, var(--primary), transparent);
+      box-shadow: 0 0 15px var(--primary);
+      animation: scan 4s linear infinite;
+      opacity: 0.6;
+      z-index: 10;
+      pointer-events: none;
+    }
 
-  padding: 15px;
+    @keyframes scan {
+      0% { top: 0%; }
+      100% { top: 100%; }
+    }
 
-  background: rgba(0,0,0,0.7);
+    /* 底部操作區：適配底部安全區域（如 iPhone 小白條） */
+    .bottom-ui {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      padding: 40px 25px calc(env(safe-area-inset-bottom) + 20px);
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.8) 0%, transparent 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 15px;
+      z-index: 100;
+    }
 
-  color: white;
+    .status-msg {
+      font-size: 0.8rem;
+      color: rgba(255, 255, 255, 0.7);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
 
-  text-align: center;
+    #startBtn {
+      width: 100%;
+      max-width: 320px;
+      height: 58px;
+      border: none;
+      border-radius: 29px;
+      background: var(--primary);
+      color: #000;
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      box-shadow: 0 10px 25px rgba(0, 255, 136, 0.4);
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
 
-  font-size: 20px;
-  font-weight: bold;
+    #startBtn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 30px rgba(0, 255, 136, 0.5);
+    }
 
-  z-index: 100;
-}
+    #startBtn:active {
+      transform: scale(0.96);
+    }
 
-.camera-container {
-
-  width: 100%;
-  height: 100%;
-
-  position: relative;
-
-  overflow: hidden;
-}
-
-video {
-
-  width: 100%;
-  height: 100%;
-
-  object-fit: cover;
-
-  background: black;
-}
-
-canvas {
-
-  position: absolute;
-
-  left: 0;
-  top: 0;
-
-  width: 100%;
-  height: 100%;
-
-  pointer-events: none;
-}
-
-.bottom-ui {
-
-  position: fixed;
-
-  bottom: 20px;
-
-  width: 100%;
-
-  display: flex;
-
-  flex-direction: column;
-
-  align-items: center;
-
-  gap: 10px;
-
-  z-index: 100;
-}
-
-#startBtn {
-
-  padding: 15px 30px;
-
-  border: none;
-
-  border-radius: 50px;
-
-  background: #00ff88;
-
-  color: black;
-
-  font-size: 18px;
-  font-weight: bold;
-}
-
-#fps {
-
-  color: white;
-
-  background: rgba(0,0,0,0.6);
-
-  padding: 8px 15px;
-
-  border-radius: 20px;
-}
+    #startBtn:disabled {
+      background: #333;
+      color: #777;
+      box-shadow: none;
+      cursor: not-allowed;
+    }
   </style>
-
 </head>
 
 <body>
 
   <div class="app">
+    <header class="header">
+      <div class="brand">Yolo<span>Vision</span></div>
+      <div id="fps">FPS: 0</div>
+    </header>
 
-    <div class="topbar">
-      YOLO AI Detection
-    </div>
-
-    <div class="camera-container">
-
-      <video
-        id="video"
-        autoplay
-        playsinline
-        muted
-      ></video>
-
+    <main class="camera-container">
+      <!-- playsinline 很重要，防止 iPhone 自動全螢幕播放 -->
+      <video id="video" autoplay playsinline muted></video>
       <canvas id="canvas"></canvas>
+      <div class="scan-line"></div>
+    </main>
 
-    </div>
-
-    <div class="bottom-ui">
-
-      <button id="startBtn" disabled>
-        開始偵測
-      </button>
-
-      <div id="fps">
-        FPS: 0
-      </div>
-
-    </div>
-
+    <footer class="bottom-ui">
+      <div class="status-msg" id="statusText">正在初始化 AI 模型...</div>
+      <button id="startBtn" disabled>請稍候</button>
+    </footer>
   </div>
 
   <script src="app.js"></script>
