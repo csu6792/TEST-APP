@@ -37,7 +37,7 @@ async function loadModel() {
 
   session =
     await ort.InferenceSession.create(
-      "./model/yolo.onnx",
+      "./model/yolo26n.onnx",
       {
         executionProviders: ["wasm"]
       }
