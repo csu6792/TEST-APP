@@ -1,20 +1,21 @@
 body {
-  font-family: Arial;
-  padding: 20px;
   background: #111;
   color: white;
+  font-family: Arial;
+  padding: 20px;
 }
 
-.canvas-container {
+.container {
   position: relative;
-  display: inline-block;
+  width: 640px;
 }
 
-#image {
-  max-width: 640px;
+video {
+  width: 640px;
+  border-radius: 10px;
 }
 
-#canvas {
+canvas {
   position: absolute;
   left: 0;
   top: 0;
