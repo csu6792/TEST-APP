@@ -28,6 +28,13 @@ const classNames = [
   'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
 ];
 
+// 初始化音訊上下文
+const AudioContext = window.AudioContext || window.webkitAudioContext;
+const audioCtx = new AudioContext();
+const panner = audioCtx.createStereoPanner();
+panner.connect(audioCtx.destination);
+
+// 限制語音播報頻率的變數
 let lastSpokenLabel = "";
 let lastSpokenTime = 0;
 
@@ -74,6 +81,11 @@ loadModel();
 
 startBtn.onclick = async () => {
   if (isDetecting) return;
+
+  // --- 關鍵：解鎖音訊 ---
+    if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+    }
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
