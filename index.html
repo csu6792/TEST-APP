@@ -1,35 +1,60 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-TW">
+
 <head>
+
   <meta charset="UTF-8">
-  <title>YOLO Webcam</title>
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+
+  <title>YOLO AI Detection</title>
 
   <link rel="stylesheet" href="style.css">
 
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+
 </head>
+
 <body>
 
-  <h1>YOLO Webcam Detection</h1>
+  <div class="app">
 
-  <button id="startBtn">
-    Start Camera
-  </button>
+    <div class="topbar">
+      YOLO AI Detection
+    </div>
 
-  <div class="container">
+    <div class="camera-container">
 
-    <video
-      id="video"
-      autoplay
-      playsinline
-      muted
-    ></video>
+      <video
+        id="video"
+        autoplay
+        playsinline
+        muted
+      ></video>
 
-    <canvas id="canvas"></canvas>
+      <canvas id="canvas"></canvas>
+
+    </div>
+
+    <div class="bottom-ui">
+
+      <button id="startBtn">
+        開始偵測
+      </button>
+
+      <div id="fps">
+        FPS: 0
+      </div>
+
+    </div>
 
   </div>
 
   <script src="app.js"></script>
 
 </body>
+
 </html>
