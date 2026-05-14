@@ -3,11 +3,13 @@
   "do_pad": true,
   "do_rescale": true,
   "do_resize": true,
-  "feature_extractor_type": "ImageFeatureExtractor",
+  "image_processor_type": "PyTorchImageProcessor",
+  "feature_extractor_type": "PyTorchImageProcessor",
   "pad_size": 640,
   "resample": 2,
   "rescale_factor": 0.00392156862745098,
   "size": {
-    "longest_edge": 640
+    "height": 640,
+    "width": 640
   }
 }
