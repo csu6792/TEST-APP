@@ -115,28 +115,50 @@ function preprocess(data) {
 function drawBoxes(data) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const scaleX = canvas.width / MODEL_SIZE;
-  const scaleY = canvas.height / MODEL_SIZE;
+  const videoW = video.videoWidth;
+  const videoH = video.videoHeight;
+  const canvasW = canvas.clientWidth;
+  const canvasH = canvas.clientHeight;
 
-  // 這裡維持你原有的解析邏輯
-  // 但提醒：若偵測不到框，通常是因為輸出格式不是 [x1, y1, x2, y2, score, label]
+  // 計算 object-fit: cover 的縮放比例
+  const scale = Math.max(canvasW / videoW, canvasH / videoH);
+  const xOffset = (canvasW - videoW * scale) / 2;
+  const yOffset = (canvasH - videoH * scale) / 2;
+
+  // YOLO 模型輸入為 640x640
+  const modelScaleX = videoW / 640;
+  const modelScaleY = videoH / 640;
+
   for (let i = 0; i < data.length; i += 6) {
     const score = data[i + 4];
     if (score < 0.5) continue;
 
-    const x1 = data[i] * scaleX;
-    const y1 = data[i + 1] * scaleY;
-    const x2 = data[i + 2] * scaleX;
-    const y2 = data[i + 3] * scaleY;
-    const classId = Math.round(data[i + 5]);
+    // 1. 還原回視訊原始像素座標
+    const origX1 = data[i] * modelScaleX;
+    const origY1 = data[i + 1] * modelScaleY;
+    const origX2 = data[i + 2] * modelScaleX;
+    const origY2 = data[i + 3] * modelScaleY;
 
+    // 2. 轉換為螢幕顯示座標（加上 Offset 與 Scale）
+    const x = origX1 * scale + xOffset;
+    const y = origY1 * scale + yOffset;
+    const w = (origX2 - origX1) * scale;
+    const h = (origY2 - origY1) * scale;
+
+    // 3. 繪製科技感偵測框
     ctx.strokeStyle = "#00ff88";
     ctx.lineWidth = 3;
-    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    ctx.strokeRect(x, y, w, h);
 
+    // 繪製標籤背景
     ctx.fillStyle = "#00ff88";
-    ctx.font = "16px Arial";
-    const label = `${classNames[classId] || 'Obj'} ${score.toFixed(2)}`;
-    ctx.fillText(label, x1, y1 > 20 ? y1 - 5 : y1 + 20);
+    const label = classNames[Math.round(data[i+5])] || "OBJ";
+    const txt = `${label} ${Math.round(score * 100)}%`;
+    ctx.font = "bold 14px Arial";
+    const txtWidth = ctx.measureText(txt).width;
+    
+    ctx.fillRect(x, y - 25, txtWidth + 10, 25);
+    ctx.fillStyle = "black";
+    ctx.fillText(txt, x + 5, y - 7);
   }
 }
