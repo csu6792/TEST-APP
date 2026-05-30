@@ -2,214 +2,550 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>Vision AI | Spatial Computing</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>VisionOS 3D 空間電子寵物互動</title>
+  
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 
   <style>
-    :root {
-      /* Apple Vision Pro 特有的半透明玻璃色值 */
-      --glass-bg: rgba(255, 255, 255, 0.12);
-      --glass-border: rgba(255, 255, 255, 0.25);
-      --vibrant-green: #00ff88;
-      --system-white: rgba(255, 255, 255, 0.94);
-    }
-
+    /* 全螢幕基礎重設 */
     * {
+      box-sizing: border-box;
       margin: 0;
       padding: 0;
-      box-sizing: border-box;
-      -webkit-tap-highlight-color: transparent;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
-    body {
-      width: 100vw;
-      height: 100dvh;
+    body, html {
+      width: 100%;
+      height: 100%;
       overflow: hidden;
-      background: #000;
-      font-family: -apple-system, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
-      color: var(--system-white);
+      background-color: #000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
 
-    /* 背景相機層 */
-    .camera-view {
+    /* 1. 底部相機畫面：滿版置底 */
+    #video {
       position: fixed;
-      inset: 0;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
       z-index: 1;
     }
 
-    video {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-
-    /* 懸浮 AR 繪圖層 */
-    canvas {
-      position: absolute;
-      inset: 0;
-      z-index: 2;
-      pointer-events: none;
-    }
-
-    /* VisionOS 玻璃容器基板 */
-    .glass-panel {
-      background: var(--glass-bg);
-      backdrop-filter: blur(25px) saturate(180%);
-      -webkit-backdrop-filter: blur(25px) saturate(180%);
-      border: 1px solid var(--glass-border);
-      border-radius: 40px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 
-                  inset 0 0 0 0.5px rgba(255, 255, 255, 0.2);
-    }
-
-    /* 頂部導覽列：懸浮膠囊樣式 */
-    .header {
+    /* 2. 中層 2D Canvas：用來繪製 VisionOS Bounding Box */
+    #canvas {
       position: fixed;
-      top: calc(env(safe-area-inset-top) + 15px);
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 2;
+      pointer-events: none; /* 穿透點擊 */
+    }
+
+    /* 3. 上層 Three.js 容器：用來渲染 3D 機器人 */
+    #threejs-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 3;
+      pointer-events: none; /* 穿透點擊 */
+    }
+
+    /* 4. VisionOS 風格頂部狀態列 */
+    .top-bar {
+      position: fixed;
+      top: 20px;
       left: 50%;
       transform: translateX(-50%);
-      width: 90%;
-      max-width: 500px;
-      height: 54px;
+      z-index: 10;
       display: flex;
-      justify-content: space-between;
+      gap: 15px;
       align-items: center;
-      padding: 0 24px;
-      z-index: 100;
-    }
-
-    .brand {
-      font-size: 1rem;
-      font-weight: 600;
-      letter-spacing: -0.2px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .brand .dot {
-      width: 8px;
-      height: 8px;
-      background: var(--vibrant-green);
-      border-radius: 50%;
-      box-shadow: 0 0 10px var(--vibrant-green);
+      padding: 10px 20px;
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 30px;
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 0.5px;
     }
 
     #fps {
-      font-size: 0.8rem;
-      font-weight: 500;
-      opacity: 0.8;
-      font-variant-numeric: tabular-nums;
+      color: #00ff88;
+      font-family: monospace;
+      font-weight: bold;
     }
 
-    /* 底部控制區域 */
-    .bottom-controls {
+    /* 5. VisionOS 風格底部控制面板 */
+    .control-panel {
       position: fixed;
-      bottom: calc(env(safe-area-inset-bottom) + 30px);
+      bottom: 40px;
       left: 50%;
       transform: translateX(-50%);
-      width: 90%;
-      max-width: 400px;
-      padding: 24px;
-      z-index: 100;
-      text-align: center;
+      z-index: 10;
     }
 
-    .status-msg {
-      font-size: 0.85rem;
-      font-weight: 400;
-      margin-bottom: 20px;
-      letter-spacing: -0.1px;
-      color: rgba(255, 255, 255, 0.6);
-    }
-
-    /* Vision Pro 按鈕風格：純白高亮感 */
     #startBtn {
-      width: 100%;
-      height: 56px;
+      padding: 14px 36px;
+      font-size: 16px;
+      font-weight: 600;
+      color: #000;
+      background: rgba(255, 255, 255, 0.9);
       border: none;
       border-radius: 28px;
-      background: white; /* VisionOS 主按鈕通常是全白或高亮玻璃 */
-      color: #000;
-      font-size: 1rem;
-      font-weight: 600;
       cursor: pointer;
-      transition: all 0.3s cubic-bezier(0.2, 0, 0, 1);
-      box-shadow: 0 4px 20px rgba(255, 255, 255, 0.2);
+      box-shadow: 0 4px 15px rgba(255, 255, 255, 0.3), inset 0 1px 0 rgba(255,255,255,1);
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      letter-spacing: 1px;
     }
 
-    #startBtn:active {
-      transform: scale(0.94);
-      background: rgba(255, 255, 255, 0.8);
+    #startBtn:hover:not(:disabled) {
+      background: #ffffff;
+      transform: scale(1.04);
+      box-shadow: 0 6px 20px rgba(255, 255, 255, 0.5);
+    }
+
+    #startBtn:active:not(:disabled) {
+      transform: scale(0.98);
     }
 
     #startBtn:disabled {
-      background: rgba(255, 255, 255, 0.1);
-      color: rgba(255, 255, 255, 0.3);
+      background: rgba(255, 255, 255, 0.3);
+      color: rgba(0, 0, 0, 0.4);
       cursor: not-allowed;
       box-shadow: none;
     }
-
-    /* 柔和的空間掃描動畫 */
-    .spatial-grid {
-      position: fixed;
-      inset: 0;
-      background-image: 
-        radial-gradient(circle at 2px 2px, rgba(255,255,255,0.05) 1px, transparent 0);
-      background-size: 40px 40px;
-      z-index: 3;
-      pointer-events: none;
-      opacity: 0.5;
-    }
-
-    /* 懸浮指示線 */
-    .indicator {
-      position: absolute;
-      width: 100%;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
-      z-index: 4;
-      animation: float 6s ease-in-out infinite;
-    }
-
-    @keyframes float {
-      0%, 100% { top: 30%; opacity: 0; }
-      50% { top: 70%; opacity: 1; }
-    }
   </style>
 </head>
-
 <body>
-  <!-- 1. 環境背景 -->
-  <div class="camera-view">
-    <video id="video" autoplay playsinline muted></video>
+
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <div id="threejs-container"></div>
+
+  <div class="top-bar">
+    <span id="statusText">正在初始化主機...</span>
+    <span id="fps">FPS: --</span>
   </div>
 
-  <!-- 2. 空間網格感 -->
-  <div class="spatial-grid"></div>
-  <div class="indicator"></div>
+  <div class="control-panel">
+    <button id="startBtn" disabled>模型載入中...</button>
+  </div>
 
-  <!-- 3. AR 偵測圖層 -->
-  <canvas id="canvas"></canvas>
+  <script>
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const startBtn = document.getElementById("startBtn");
+    const fpsText = document.getElementById("fps");
+    const statusText = document.getElementById("statusText");
 
-  <!-- 4. visionOS 懸浮 Header -->
-  <header class="header glass-panel">
-    <div class="brand">
-      <div class="dot"></div>
-      Yolo Vision
-    </div>
-    <div id="fps">FPS: 0</div>
-  </header>
+    const MODEL_SIZE = 640;
+    let session;
+    let isDetecting = false;
 
-  <!-- 5. visionOS 控制面板 -->
-  <footer class="bottom-controls glass-panel">
-    <div class="status-msg" id="statusText">正在搜尋空間模型...</div>
-    <button id="startBtn" disabled>開始空間偵測</button>
-  </footer>
+    // 快取全域臨時 Canvas 避免記憶體洩漏
+    const tempCanvas = document.createElement("canvas");
+    tempCanvas.width = MODEL_SIZE;
+    tempCanvas.height = MODEL_SIZE;
+    const tempCtx = tempCanvas.getContext("2d");
 
-  <script src="app.js"></script>
+    const classNames = [
+      'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
+      'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat',
+      'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack',
+      'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball',
+      'Kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
+      'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+      'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake',
+      'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop',
+      'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink',
+      'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
+    ];
+
+    // --- 1. 空間音效與語音系統 ---
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    let audioCtx = null;
+    let lastSpokenLabel = "";
+    let lastSpokenTime = 0;
+    let lastPingTime = 0;
+
+    function speakObject(label) {
+      const now = Date.now();
+      if (label === lastSpokenLabel && now - lastSpokenTime < 4000) return;
+      const msg = new SpeechSynthesisUtterance(label);
+      msg.lang = "en-US";
+      msg.rate = 1.1;
+      msg.pitch = 1.3;
+      window.speechSynthesis.speak(msg);
+      lastSpokenLabel = label;
+      lastSpokenTime = now;
+    }
+
+    function playSpatialPing(centerX, canvasW, distanceScale) {
+      const now = Date.now();
+      if (now - lastPingTime < 800) return;
+      lastPingTime = now;
+      if (!audioCtx) return;
+
+      const panValue = (centerX / canvasW) * 2 - 1;
+      const panner = audioCtx.createStereoPanner();
+      panner.pan.setValueAtTime(panValue, audioCtx.currentTime);
+
+      const osc = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      osc.type = "sine";
+      const baseFreq = 600 + (distanceScale * 400);
+      osc.frequency.setValueAtTime(baseFreq, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(150, audioCtx.currentTime + 0.12);
+
+      const volume = Math.min(0.15 + (distanceScale * 0.2), 0.4);
+      gainNode.gain.setValueAtTime(volume, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+
+      osc.connect(gainNode);
+      gainNode.connect(panner);
+      panner.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.15);
+    }
+
+    // --- 2. Three.js 3D 空間電子寵物系統 (方案 1 機器人) ---
+    let scene, camera, renderer, clock;
+    let petMixer, gltfScene;
+    let idleAction, walkingAction, danceAction;
+
+    const pet3D = {
+      model: null,
+      targetPosition: new THREE.Vector3(0, -1.2, -4),
+      state: "IDLE"
+    };
+
+    function initThreeJS() {
+      clock = new THREE.Clock();
+      scene = new THREE.Scene();
+
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 0, 0); 
+
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(window.devicePixelRatio);
+      document.getElementById("threejs-container").appendChild(renderer.domElement);
+
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
+      scene.add(ambientLight);
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+      directionalLight.position.set(0, 2, 2);
+      scene.add(directionalLight);
+
+      // 載入方案 1 官方線上機器人模型 (RobotExpressive.glb)
+      const loader = new THREE.GLTFLoader();
+      const robotUrl = "https://cdn.jsdelivr.net/gh/mrdoob/three.js@master/examples/models/gltf/RobotExpressive.glb";
+      
+      statusText.innerText = "正在從雲端載入 3D 寵物...";
+      
+      loader.load(robotUrl, (gltf) => {
+        gltfScene = gltf.scene;
+        gltfScene.scale.set(0.25, 0.25, 0.25); 
+        gltfScene.position.set(0, -1.2, -4);    
+        scene.add(gltfScene);
+
+        petMixer = new THREE.AnimationMixer(gltfScene);
+        const clips = gltf.animations;
+
+        idleAction = petMixer.clipAction(THREE.AnimationClip.findByName(clips, 'Idle'));
+        walkingAction = petMixer.clipAction(THREE.AnimationClip.findByName(clips, 'Walking'));
+        danceAction = petMixer.clipAction(THREE.AnimationClip.findByName(clips, 'Dance'));
+
+        if(idleAction) idleAction.play();
+        pet3D.model = gltfScene;
+        
+        console.log("3D Pet Loaded Successfully");
+        statusText.innerText = "3D 寵物與 AI 準備就緒";
+      }, undefined, (error) => {
+        console.error("3D 模型載入失敗:", error);
+        statusText.innerText = "3D 寵物載入失敗";
+      });
+
+      animateThreeJS();
+    }
+
+    function animateThreeJS() {
+      requestAnimationFrame(animateThreeJS);
+      const delta = clock.getDelta();
+
+      if (petMixer) petMixer.update(delta);
+
+      // 機器人 3D 物理追蹤 (Lerp 插值公式)
+      if (pet3D.model && pet3D.state === "WALKING") {
+        pet3D.model.position.lerp(pet3D.targetPosition, 0.05);
+
+        // 轉向目標
+        const lookTarget = new THREE.Vector3(pet3D.targetPosition.x, pet3D.model.position.y, pet3D.targetPosition.z);
+        pet3D.model.lookAt(lookTarget);
+
+        // 到達目標切換動作
+        if (pet3D.model.position.distanceTo(pet3D.targetPosition) < 0.25) {
+          pet3D.state = "ACTION";
+          if(walkingAction && danceAction) {
+            walkingAction.crossFadeTo(danceAction, 0.3);
+            danceAction.reset().play();
+          }
+
+          // 互動 4 秒後自動恢復 Idle
+          setTimeout(() => {
+            if (pet3D.state === "ACTION") {
+              pet3D.state = "IDLE";
+              if(danceAction && idleAction) {
+                danceAction.crossFadeTo(idleAction, 0.5);
+                idleAction.reset().play();
+              }
+            }
+          }, 4000);
+        }
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // --- 3. YOLOv8 AI 模型系統 ---
+    async function loadModel() {
+      try {
+        startBtn.disabled = true;
+        startBtn.innerText = "模型載入中...";
+        ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
+
+        session = await ort.InferenceSession.create(
+          "./model/yolo26n.onnx", 
+          { executionProviders: ["wasm"] }
+        );
+
+        console.log("YOLO Model loaded");
+        startBtn.disabled = false;
+        startBtn.innerText = "開始空間偵測";
+        statusText.innerText = "AI 空間主機就緒";
+      } catch (e) {
+        console.error("YOLO 載入失敗:", e);
+        startBtn.innerText = "載入失敗 (檢查模型路徑)";
+        statusText.innerText = "AI 模型載入失敗";
+      }
+    }
+
+    // 監聽視窗縮放，保持 3D 滿版與相機比例正確
+    window.addEventListener('resize', () => {
+      if (camera && renderer) {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+    });
+
+    // 啟動初始化
+    initThreeJS();
+    loadModel();
+
+    startBtn.onclick = async () => {
+      if (isDetecting) return;
+
+      if (!audioCtx) audioCtx = new AudioContext();
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+          audio: false
+        });
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          isDetecting = true;
+          statusText.innerText = "空間偵測中...";
+          detectFrame();
+        };
+      } catch (err) {
+        console.error("相機啟動錯誤:", err);
+        alert("請確認相機權限已開啟");
+      }
+    };
+
+    let lastFrameTime = performance.now();
+    async function detectFrame() {
+      if (!session || !isDetecting) return;
+
+      const now = performance.now();
+      fpsText.innerText = `FPS: ${Math.round(1000 / (now - lastFrameTime))}`;
+      lastFrameTime = now;
+
+      const vW = video.videoWidth;
+      const vH = video.videoHeight;
+      const size = Math.min(vW, vH);
+      const sx = (vW - size) / 2;
+      const sy = (vH - size) / 2;
+
+      tempCtx.drawImage(video, sx, sy, size, size, 0, 0, MODEL_SIZE, MODEL_SIZE);
+      const imageData = tempCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE);
+      const input = preprocess(imageData.data);
+      const tensor = new ort.Tensor("float32", input, [1, 3, MODEL_SIZE, MODEL_SIZE]);
+
+      const outputs = await session.run({ images: tensor });
+      const outputData = outputs[Object.keys(outputs)[0]].cpuData;
+
+      drawBoxes(outputData, sx, sy, size);
+      requestAnimationFrame(detectFrame);
+    }
+
+    function preprocess(data) {
+      const float32Data = new Float32Array(3 * MODEL_SIZE * MODEL_SIZE);
+      const frameSize = MODEL_SIZE * MODEL_SIZE;
+      for (let i = 0; i < frameSize; i++) {
+        float32Data[i] = data[i * 4] / 255; 
+        float32Data[i + frameSize] = data[i * 4 + 1] / 255; 
+        float32Data[i + frameSize * 2] = data[i * 4 + 2] / 255; 
+      }
+      return float32Data;
+    }
+
+    // --- 4. 2D 渲染與 3D 空間目標轉換 ---
+    function drawBoxes(data, sx, sy, size) {
+      if (canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight) {
+        canvas.width = canvas.clientWidth;
+        canvas.height = canvas.clientHeight;
+      }
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const videoW = video.videoWidth;
+      const videoH = video.videoHeight;
+      const canvasW = canvas.width;
+      const canvasH = canvas.height;
+
+      const displayScale = Math.max(canvasW / videoW, canvasH / videoH);
+      const xOffset = (canvasW - videoW * displayScale) / 2;
+      const yOffset = (canvasH - videoH * displayScale) / 2;
+      const modelToVideoScale = size / 640;
+
+      let foundTarget = null;
+
+      for (let i = 0; i < data.length; i += 6) {
+        const score = data[i + 4];
+        if (score < 0.45) continue; 
+
+        const x = ((data[i] * modelToVideoScale) + sx) * displayScale + xOffset;
+        const y = ((data[i + 1] * modelToVideoScale) + sy) * displayScale + yOffset;
+        const w = (data[i + 2] - data[i]) * modelToVideoScale * displayScale;
+        const h = (data[i + 3] - data[i + 1]) * modelToVideoScale * displayScale;
+
+        const classId = Math.round(data[i + 5]);
+        const label = classNames[classId] || "Object";
+
+        if (score > 0.75) { 
+          speakObject(label);
+          playSpatialPing(x + w / 2, canvasW, h / canvasH);
+        }
+
+        // --- 3D 空間追蹤邏輯 ---
+        if (pet3D.state === "IDLE" && pet3D.model) {
+          // 當看見人、沙發、椅子、水瓶等物件時觸發導航
+          if (label === "person" || label === "couch" || label === "chair" || label === "bottle") {
+            const centerX = x + w / 2;
+            
+            // 2D 螢幕 X 座標轉為 3D 的 NDC 座標 
+            const ndcX = (centerX / canvasW) * 2 - 1;
+
+            // 計算平滑跟隨的 3D X 軸橫移位置
+            const targetX = ndcX * 3.5 * (canvasW / canvasH);
+            
+            // Y 軸固定在 -1.2 模擬地面，Z 軸固定在 -4（相機前方 4 公尺）
+            foundTarget = new THREE.Vector3(targetX, -1.2, -4);
+          }
+        }
+
+        // A. 繪製圓角框
+        ctx.save();
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = "rgba(0, 0, 0, 0.4)";
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+        ctx.lineWidth = 2;
+        drawRoundedRect(ctx, x, y, w, h, 12);
+        ctx.stroke();
+        ctx.restore();
+
+        // B. 懸浮標籤
+        ctx.font = "600 13px -apple-system, BlinkMacSystemFont, sans-serif";
+        const txt = `${label.toUpperCase()} ${Math.round(score * 100)}%`;
+        const txtWidth = ctx.measureText(txt).width;
+        const labelW = txtWidth + 20, labelH = 28, labelX = x, labelY = y - labelH - 10;
+
+        ctx.fillStyle = "rgba(10, 10, 10, 0.55)";
+        drawRoundedRect(ctx, labelX, labelY, labelW, labelH, 14);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = "#ffffff";
+        ctx.textBaseline = "middle";
+        ctx.fillText(txt, labelX + 10, labelY + labelH / 2 + 1);
+
+        // C. 霓虹強化四角
+        drawVisionCorners(ctx, x, y, w, h, 18);
+      }
+
+      // --- 啟動 3D 追蹤尋路 ---
+      if (foundTarget && pet3D.state === "IDLE") {
+        pet3D.targetPosition.copy(foundTarget);
+        pet3D.state = "WALKING";
+
+        if (idleAction && walkingAction) {
+          idleAction.crossFadeTo(walkingAction, 0.3);
+          walkingAction.reset().play();
+        }
+      }
+    }
+
+    // 繪圖輔報工具函式
+    function drawVisionCorners(ctx, x, y, w, h, len) {
+      ctx.save();
+      ctx.strokeStyle = "#00ff88";
+      ctx.lineWidth = 3.5;
+      ctx.lineCap = "round"; 
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = "rgba(0, 255, 136, 0.5)";
+
+      ctx.beginPath(); ctx.moveTo(x, y + len); ctx.lineTo(x, y); ctx.lineTo(x + len, y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x + w - len, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - len); ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawRoundedRect(ctx, x, y, w, h, r) {
+      if (w < 2 * r) r = w / 2;
+      if (h < 2 * r) r = h / 2;
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+  </script>
 </body>
 </html>
