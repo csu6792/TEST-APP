@@ -2,151 +2,129 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>VisionOS 3D 空間電子寵物互動 - 優化版</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Vision AI | Spatial Freezer Tagging</title>
   
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
-  
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 
   <style>
-    /* 全螢幕基礎重設 */
+    :root {
+      --glass-bg: rgba(255, 255, 255, 0.12);
+      --glass-border: rgba(255, 255, 255, 0.25);
+      --vibrant-green: #00ff88;
+      --system-white: rgba(255, 255, 255, 0.94);
+    }
+
     * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-      -webkit-user-select: none;
-      user-select: none;
+      margin: 0; padding: 0; box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-user-select: none; user-select: none;
     }
 
-    body, html {
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background-color: #000;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    body {
+      width: 100vw; height: 100dvh; overflow: hidden; background: #000;
+      font-family: -apple-system, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
+      color: var(--system-white);
     }
 
-    /* 1. 底部相機畫面：滿版置底 */
-    #video {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      object-fit: cover;
-      z-index: 1;
+    /* 1. 底層相機畫面 */
+    .camera-view {
+      position: fixed; inset: 0; z-index: 1;
+    }
+    video { width: 100%; height: 100%; object-fit: cover; }
+
+    /* 2. 裝飾性空間網格 ( pointer-events: none 穿透點擊 ) */
+    .spatial-grid {
+      position: fixed; inset: 0;
+      background-image: radial-gradient(circle at 2px 2px, rgba(255,255,255,0.05) 1px, transparent 0);
+      background-size: 40px 40px;
+      z-index: 3; pointer-events: none; opacity: 0.5;
+    }
+    .indicator {
+      position: absolute; width: 100%; height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+      z-index: 4; pointer-events: none; animation: float 6s ease-in-out infinite;
+    }
+    @keyframes float { 0%, 100% { top: 30%; opacity: 0; } 50% { top: 70%; opacity: 1; } }
+
+    /* 3. 交互性 2D 偵測圖層 */
+    canvas {
+      position: absolute; inset: 0;
+      /* 重要修正：提升 z-index，移除 none，設置準星光標 */
+      z-index: 2; cursor: crosshair;
     }
 
-    /* 2. 中層 2D Canvas：用來繪製 VisionOS Bounding Box */
-    #canvas {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      z-index: 2;
-      pointer-events: none;
+    /* 4. VisionOS 漂浮 UI ( z-index 最高 ) */
+    .glass-panel {
+      background: var(--glass-bg);
+      backdrop-filter: blur(25px) saturate(180%);
+      -webkit-backdrop-filter: blur(25px) saturate(180%);
+      border: 1px solid var(--glass-border);
+      border-radius: 40px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 0 0 0.5px rgba(255, 255, 255, 0.2);
     }
 
-    /* 3. 上層 Three.js 容器：用來渲染 3D 機器人 */
-    #threejs-container {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      z-index: 3;
-      pointer-events: none;
-    }
-
-    /* 4. VisionOS 風格頂部狀態列 */
-    .top-bar {
-      position: fixed;
-      top: 20px;
-      left: 50%;
+    .header {
+      position: fixed; top: calc(env(safe-area-inset-top) + 15px); left: 50%;
       transform: translateX(-50%);
-      z-index: 10;
-      display: flex;
-      gap: 15px;
-      align-items: center;
-      padding: 10px 20px;
-      background: rgba(255, 255, 255, 0.1);
-      backdrop-filter: blur(20px) saturate(180%);
-      -webkit-backdrop-filter: blur(20px) saturate(180%);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      border-radius: 30px;
-      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
-      color: #fff;
-      font-size: 14px;
-      font-weight: 500;
-      letter-spacing: 0.5px;
-      white-space: nowrap;
+      width: 90%; max-width: 500px; height: 54px;
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 0 24px; z-index: 100;
     }
+    .brand { font-size: 1rem; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .brand .dot { width: 8px; height: 8px; background: var(--vibrant-green); border-radius: 50%; box-shadow: 0 0 10px var(--vibrant-green); }
+    #fps { font-size: 0.8rem; font-weight: 500; color: var(--vibrant-green); font-variant-numeric: tabular-nums; }
 
-    #fps {
-      color: #00ff88;
-      font-family: monospace;
-      font-weight: bold;
-    }
-
-    /* 5. VisionOS 風格底部控制面板 */
-    .control-panel {
-      position: fixed;
-      bottom: 40px;
-      left: 50%;
+    .bottom-controls {
+      position: fixed; bottom: calc(env(safe-area-inset-bottom) + 30px); left: 50%;
       transform: translateX(-50%);
-      z-index: 10;
+      width: 90%; max-width: 400px; padding: 24px; z-index: 100; text-align: center;
+    }
+    .status-msg { font-size: 0.85rem; color: rgba(2 system-white, 0.6); margin-bottom: 20px; }
+    
+    /* 凍結功能指令說明標籤 */
+    .freeze-hint {
+      position: absolute; top: -35px; left: 50%; transform: translateX(-50%);
+      font-size: 0.7rem; color: #fff; opacity: 0.8;
+      background: rgba(0,0,0,0.5); padding: 4px 10px; border-radius: 10px;
+      white-space: nowrap; pointer-events: none;
     }
 
     #startBtn {
-      padding: 14px 36px;
-      font-size: 16px;
-      font-weight: 600;
-      color: #000;
-      background: rgba(255, 255, 255, 0.9);
-      border: none;
-      border-radius: 28px;
-      cursor: pointer;
-      box-shadow: 0 4px 15px rgba(255, 255, 255, 0.3), inset 0 1px 0 rgba(255,255,255,1);
-      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-      letter-spacing: 1px;
-      white-space: nowrap;
+      width: 100%; height: 56px; border: none; border-radius: 28px;
+      background: white; color: #000; font-size: 1rem; font-weight: 600; cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.2, 0, 0, 1);
+      box-shadow: 0 4px 20px rgba(255, 255, 255, 0.2);
     }
-
-    #startBtn:hover:not(:disabled) {
-      background: #ffffff;
-      transform: scale(1.04);
-      box-shadow: 0 6px 20px rgba(255, 255, 255, 0.5);
-    }
-
-    #startBtn:active:not(:disabled) {
-      transform: scale(0.98);
-    }
-
-    #startBtn:disabled {
-      background: rgba(255, 255, 255, 0.3);
-      color: rgba(0, 0, 0, 0.4);
-      cursor: not-allowed;
-      box-shadow: none;
-    }
+    #startBtn:disabled { background: rgba(255, 255, 255, 0.1); color: rgba(25系統-white, 0.3); }
   </style>
 </head>
+
 <body>
+  <div class="camera-view">
+    <video id="video" autoplay playsinline muted></video>
+  </div>
 
-  <video id="video" autoplay playsinline muted></video>
+  <div class="spatial-grid"></div>
+  <div class="indicator"></div>
+
   <canvas id="canvas"></canvas>
-  <div id="threejs-container"></div>
 
-  <div class="top-bar">
-    <span id="statusText">正在初始化主機...</span>
-    <span id="fps">AI FPS: --</span>
-  </div>
+  <header class="header glass-panel">
+    <div class="brand">
+      <div class="dot"></div>
+      Spatial Freezer
+    </div>
+    <div id="fps">AI FPS: 0</div>
+  </header>
 
-  <div class="control-panel">
+  <footer class="bottom-controls glass-panel">
+    <div class="freeze-hint">指示：在偵測中，點擊任何霓虹框可將其「凍結」在畫面上</div>
+    
+    <div class="status-msg" id="statusText">正在初始化 AI 主機...</div>
     <button id="startBtn" disabled>模型載入中...</button>
-  </div>
+  </footer>
 
   <script>
     const video = document.getElementById("video");
@@ -166,8 +144,13 @@
     tempCanvas.height = MODEL_SIZE;
     const tempCtx = tempCanvas.getContext("2d");
 
-    // 【核心優化 1】全域預撥固定記憶體，防止反覆建立陣列導致垃圾回收（GC）爆滿卡死
+    // 【核心優化】全域預撥固定記憶體緩衝區 (Float32Array)，徹底解決反覆建立陣列導致 GC 爆滿卡死當機問題
     const inputBuffer = new Float32Array(3 * MODEL_SIZE * MODEL_SIZE);
+
+    // 【新增狀態】用來存儲被「凍結」的空間標籤
+    let frozenTags = [];
+    // 用來記錄當前影格的即時偵測資料，供交互點擊判定使用
+    let currentFrameDetections = [];
 
     const classNames = [
       'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
@@ -182,7 +165,7 @@
       'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
     ];
 
-    // --- 1. 空間音效與語音系統 ---
+    // --- 1. 空間音效與語音系統 (保留優化後的冷卻時間) ---
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     let audioCtx = null;
     let lastSpokenLabel = "";
@@ -203,7 +186,7 @@
 
     function playSpatialPing(centerX, canvasW, distanceScale) {
       const now = Date.now();
-      if (now - lastPingTime < 1000) return; // 稍微拉長間隔減少音訊處理負擔
+      if (now - lastPingTime < 1000) return;
       lastPingTime = now;
       if (!audioCtx) return;
 
@@ -229,110 +212,11 @@
       osc.stop(audioCtx.currentTime + 0.15);
     }
 
-    // --- 2. Three.js 3D 空間電子寵物系統 (方案 1 機器人) ---
-    let scene, camera, renderer, clock;
-    let petMixer, gltfScene;
-    let idleAction, walkingAction, danceAction;
-
-    const pet3D = {
-      model: null,
-      targetPosition: new THREE.Vector3(0, -1.2, -4),
-      state: "IDLE"
-    };
-
-    function initThreeJS() {
-      clock = new THREE.Clock();
-      scene = new THREE.Scene();
-
-      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera.position.set(0, 0, 0); 
-
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // 限制 PixelRatio 最高為 2 防止行動端卡頓
-      document.getElementById("threejs-container").appendChild(renderer.domElement);
-
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
-      scene.add(ambientLight);
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
-      directionalLight.position.set(0, 2, 2);
-      scene.add(directionalLight);
-
-      // 載入方案 1 官方線上機器人模型 (RobotExpressive.glb)
-      const loader = new THREE.GLTFLoader();
-      const robotUrl = "https://cdn.jsdelivr.net/gh/mrdoob/three.js@master/examples/models/gltf/RobotExpressive.glb";
-      
-      statusText.innerText = "正在從雲端載入 3D 寵物...";
-      
-      loader.load(robotUrl, (gltf) => {
-        gltfScene = gltf.scene;
-        gltfScene.scale.set(0.25, 0.25, 0.25); 
-        gltfScene.position.set(0, -1.2, -4);    
-        scene.add(gltfScene);
-
-        petMixer = new THREE.AnimationMixer(gltfScene);
-        const clips = gltf.animations;
-
-        idleAction = petMixer.clipAction(THREE.AnimationClip.findByName(clips, 'Idle'));
-        walkingAction = petMixer.clipAction(THREE.AnimationClip.findByName(clips, 'Walking'));
-        danceAction = petMixer.clipAction(THREE.AnimationClip.findByName(clips, 'Dance'));
-
-        if(idleAction) idleAction.play();
-        pet3D.model = gltfScene;
-        
-        console.log("3D Pet Loaded Successfully");
-        statusText.innerText = "3D 寵物與 AI 準備就緒";
-      }, undefined, (error) => {
-        console.error("3D 模型載入失敗:", error);
-        statusText.innerText = "3D 寵物載入失敗";
-      });
-
-      animateThreeJS();
-    }
-
-    function animateThreeJS() {
-      requestAnimationFrame(animateThreeJS);
-      const delta = clock.getDelta();
-
-      if (petMixer) petMixer.update(delta);
-
-      // 機器人 3D 物理追蹤 (Lerp 動態平滑插值)
-      if (pet3D.model && pet3D.state === "WALKING") {
-        pet3D.model.position.lerp(pet3D.targetPosition, 0.05);
-
-        // 轉向目標
-        const lookTarget = new THREE.Vector3(pet3D.targetPosition.x, pet3D.model.position.y, pet3D.targetPosition.z);
-        pet3D.model.lookAt(lookTarget);
-
-        // 到達目標切換動作
-        if (pet3D.model.position.distanceTo(pet3D.targetPosition) < 0.25) {
-          pet3D.state = "ACTION";
-          if(walkingAction && danceAction) {
-            walkingAction.crossFadeTo(danceAction, 0.3);
-            danceAction.reset().play();
-          }
-
-          // 互動完 4 秒後自動恢復 Idle 狀態
-          setTimeout(() => {
-            if (pet3D.state === "ACTION") {
-              pet3D.state = "IDLE";
-              if(danceAction && idleAction) {
-                danceAction.crossFadeTo(idleAction, 0.5);
-                idleAction.reset().play();
-              }
-            }
-          }, 4000);
-        }
-      }
-
-      renderer.render(scene, camera);
-    }
-
-    // --- 3. YOLOv8 AI 模型系統 ---
+    // --- 2. YOLOv8 AI 模型核心系統 ---
     async function loadModel() {
       try {
         startBtn.disabled = true;
-        startBtn.innerText = "模型載入中...";
+        startBtn.innerText = "AI 模型載入中...";
         ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
 
         session = await ort.InferenceSession.create(
@@ -340,46 +224,39 @@
           { executionProviders: ["wasm"] }
         );
 
-        console.log("YOLO Model loaded");
+        console.log("YOLO Model loaded successfully");
         startBtn.disabled = false;
         startBtn.innerText = "開始空間偵測";
-        statusText.innerText = "AI 空間主機就緒";
+        statusText.innerText = "AI 空間主機已就緒";
       } catch (e) {
         console.error("YOLO 載入失敗:", e);
-        startBtn.innerText = "載入失敗 (檢查模型路徑)";
-        statusText.innerText = "AI 模型載入失敗";
+        startBtn.innerText = "載入失敗 (檢查模型檔案路徑)";
+        statusText.innerText = "AI 模型載入失敗，無法啟動";
       }
     }
 
-    window.addEventListener('resize', () => {
-      if (camera && renderer) {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-      }
-    });
-
     // 啟動初始化
-    initThreeJS();
     loadModel();
 
     startBtn.onclick = async () => {
       if (isDetecting) return;
 
+      // 解鎖 AudioContext (必須由使用者交互觸發)
       if (!audioCtx) audioCtx = new AudioContext();
       if (audioCtx.state === 'suspended') await audioCtx.resume();
 
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" },
+          video: { facingMode: "environment" }, // 手機環境優先使用後置鏡頭
           audio: false
         });
         video.srcObject = stream;
         video.onloadedmetadata = () => {
+          // 同步螢幕解析度至 Canvas
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
           isDetecting = true;
-          statusText.innerText = "空間偵測中...";
+          statusText.innerText = "空間偵測中... (點擊霓虹框可凍結標籤)";
           detectFrame();
         };
       } catch (err) {
@@ -389,38 +266,42 @@
     };
 
     let lastFrameTime = performance.now();
-    
     async function detectFrame() {
       if (!session || !isDetecting) return;
 
+      // AI 推論 FPS 計算與顯示
       const now = performance.now();
       fpsText.innerText = `AI FPS: ${Math.round(1000 / (now - lastFrameTime))}`;
       lastFrameTime = now;
 
+      // 影像裁切資訊準備 ( object-fit: cover 中心正方形裁切)
       const vW = video.videoWidth;
       const vH = video.videoHeight;
       const size = Math.min(vW, vH);
       const sx = (vW - size) / 2;
       const sy = (vH - size) / 2;
 
+      // 1. 影像前處理：中心正方形裁切、縮放至 640x640、寫入inputBuffer
       tempCtx.drawImage(video, sx, sy, size, size, 0, 0, MODEL_SIZE, MODEL_SIZE);
       const imageData = tempCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE);
       
-      // 使用優化後的全域快取前處理
       const input = preprocess(imageData.data);
+      
+      // 2. 建立 Tensor
       const tensor = new ort.Tensor("float32", input, [1, 3, MODEL_SIZE, MODEL_SIZE]);
 
+      // 3. 執行 AI 模型推論 (await 為阻塞操作)
       const outputs = await session.run({ images: tensor });
       const outputData = outputs[Object.keys(outputs)[0]].cpuData;
 
-      drawBoxes(outputData, sx, sy, size);
+      // 4. 解析推論結果與綜合繪製 (傳入裁切資訊)
+      processAndDrawBoxes(outputData, sx, sy, size);
 
-      // 【核心優化 2】將原本的 requestAnimationFrame 改為具備 30ms 喘息時間的 setTimeout
-      // 降低推論總頻率，把 CPU 主執行緒釋放出來，網頁與 3D 渲染立馬流暢、不當機！
+      // 【核心優化】不用 requestAnimationFrame 壓榨 CPU，故意延遲 30ms 釋放 CPU 時間跑 UI 與語音
       setTimeout(detectFrame, 30);
     }
 
-    // 【核心優化 1 的實作】不再重複創建 Float32Array
+    // 【核心優化的實作】不再重複創建 Float32Array
     function preprocess(data) {
       const frameSize = MODEL_SIZE * MODEL_SIZE;
       for (let i = 0; i < frameSize; i++) {
@@ -431,8 +312,9 @@
       return inputBuffer;
     }
 
-    // --- 4. 2D 渲染與 3D 空間目標轉換 ---
-    function drawBoxes(data, sx, sy, size) {
+    // --- 3. 解析結果、綜合繪製與凍結系統邏輯 ---
+    function processAndDrawBoxes(data, sx, sy, size) {
+      // 自動同步 Canvas 畫布解析度與 CSS 顯示大小 (解決模糊與偏移)
       if (canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight) {
         canvas.width = canvas.clientWidth;
         canvas.height = canvas.clientHeight;
@@ -445,98 +327,218 @@
       const canvasW = canvas.width;
       const canvasH = canvas.height;
 
+      // 計算 object-fit: cover 的顯示縮放與位移鏈條
       const displayScale = Math.max(canvasW / videoW, canvasH / videoH);
       const xOffset = (canvasW - videoW * displayScale) / 2;
       const yOffset = (canvasH - videoH * displayScale) / 2;
+      
+      // 模型座標還原比例
       const modelToVideoScale = size / 640;
 
-      let foundTarget = null;
+      // 【新增】更新當前影格的即時偵測快取
+      currentFrameDetections = [];
 
       for (let i = 0; i < data.length; i += 6) {
         const score = data[i + 4];
-        if (score < 0.45) continue; 
+        if (score < 0.45) continue; // 信心門檻
 
-        const x = ((data[i] * modelToVideoScale) + sx) * displayScale + xOffset;
-        const y = ((data[i + 1] * modelToVideoScale) + sy) * displayScale + yOffset;
-        const w = (data[i + 2] - data[i]) * modelToVideoScale * displayScale;
-        const h = (data[i + 3] - data[i + 1]) * modelToVideoScale * displayScale;
+        // 座標轉換鏈條：模型 -> 視訊裁切區 -> 原始視訊 -> 螢幕 Canvas
+        const x_screen = ((data[i] * modelToVideoScale) + sx) * displayScale + xOffset;
+        const y_screen = ((data[i + 1] * modelToVideoScale) + sy) * displayScale + yOffset;
+        const w_screen = (data[i + 2] - data[i]) * modelToVideoScale * displayScale;
+        const h_screen = (data[i + 3] - data[i + 1]) * modelToVideoScale * displayScale;
 
         const classId = Math.round(data[i + 5]);
         const label = classNames[classId] || "Object";
 
+        // 存入當前影格快取
+        currentFrameDetections.push({
+          x: x_screen, y: y_screen, w: w_screen, h: h_screen, label: label, score: score
+        });
+
+        // 空間語音與音效觸發邏輯 (保留優化後的冷卻機制)
         if (score > 0.75) { 
           speakObject(label);
-          playSpatialPing(x + w / 2, canvasW, h / canvasH);
+          const centerX = x_screen + w_screen / 2;
+          const distanceScale = h_screen / canvasH; // 框高比例代表距離
+          playSpatialPing(centerX, canvasW, distanceScale);
         }
-
-        // --- 3D 空間導航演算法 ---
-        if (pet3D.state === "IDLE" && pet3D.model) {
-          if (label === "person" || label === "couch" || label === "chair" || label === "bottle") {
-            const centerX = x + w / 2;
-            const ndcX = (centerX / canvasW) * 2 - 1; // 轉為 3D NDC 座標
-            const targetX = ndcX * 3.5 * (canvasW / canvasH);
-            
-            // X隨物體移動，Y置於低處模擬地面(-1.2)，Z保持在人眼前方4米(-4)
-            foundTarget = new THREE.Vector3(targetX, -1.2, -4);
-          }
-        }
-
-        // A. 繪製圓角框
-        ctx.save();
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = "rgba(0, 0, 0, 0.4)";
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
-        ctx.lineWidth = 2;
-        drawRoundedRect(ctx, x, y, w, h, 12);
-        ctx.stroke();
-        ctx.restore();
-
-        // B. 懸浮玻璃標籤
-        ctx.font = "600 13px -apple-system, BlinkMacSystemFont, sans-serif";
-        const txt = `${label.toUpperCase()} ${Math.round(score * 100)}%`;
-        const txtWidth = ctx.measureText(txt).width;
-        const labelW = txtWidth + 20, labelH = 28, labelX = x, labelY = y - labelH - 10;
-
-        ctx.fillStyle = "rgba(10, 10, 10, 0.55)";
-        drawRoundedRect(ctx, labelX, labelY, labelW, labelH, 14);
-        ctx.fill();
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        ctx.fillStyle = "#ffffff";
-        ctx.textBaseline = "middle";
-        ctx.fillText(txt, labelX + 10, labelY + labelH / 2 + 1);
-
-        // C. 霓虹強化四角
-        drawVisionCorners(ctx, x, y, w, h, 18);
       }
 
-      // --- 驅動 3D 機器人尋路 ---
-      if (foundTarget && pet3D.state === "IDLE") {
-        pet3D.targetPosition.copy(foundTarget);
-        pet3D.state = "WALKING";
+      // --- 【新增 重大重構】綜合渲染循環 ---
 
-        if (idleAction && walkingAction) {
-          idleAction.crossFadeTo(walkingAction, 0.3);
-          walkingAction.reset().play();
-        }
+      // A. 繪製：凍結狀態的標籤 ( Style A: Faint, no corners, no animation)
+      // 它們是「過去」的遺留，飄浮在螢幕上
+      for (const tag of frozenTags) {
+        drawSingleVisualTag(ctx, tag, 'frozen');
+      }
+
+      // B. 繪製：即時偵測中的標籤 ( Style B: Neon, rounded rect, label,Corners )
+      for (const tag of currentFrameDetections) {
+        drawSingleVisualTag(ctx, tag, 'active');
       }
     }
 
-    // 繪圖輔助工具函式
+    // --- 輔助函式：繪製單個標籤的視覺樣式 (整合原本的 VisionOS 風格) ---
+    function drawSingleVisualTag(ctx, tag, type) {
+      const { x, y, w, h, label, score } = tag;
+
+      // 基本設定與毛玻璃陰影特效 (根據狀態調整透明度)
+      ctx.save();
+      
+      // 凍結的標籤看起來更透明，像記憶一樣
+      ctx.globalAlpha = type === 'active' ? 1.0 : 0.45;
+      
+      ctx.shadowBlur = type === 'active' ? 15 : 8; // 動態框發光更強
+      ctx.shadowColor = type === 'active' ? "rgba(0, 0, 0, 0.4)" : "rgba(0,0,0,0.2)";
+
+      // A. 主體圓角框線 (白色半透明)
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+      ctx.lineWidth = type === 'active' ? 2 : 1.2;
+      drawRoundedRect(ctx, x, y, w, h, 12);
+      ctx.stroke();
+
+      // B. 懸浮資訊標籤 (玻璃質感面板)
+      const font = "600 13px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.font = font;
+      const txt = `${label.toUpperCase()} ${Math.round(score * 100)}%`;
+      const txtWidth = ctx.measureText(txt).width;
+      
+      const labelW = txtWidth + 20;
+      const labelH = 28;
+      const labelX = x;
+      // 向左偏移，凍結的標籤向下偏移，增加不同的懸浮感
+      const labelY = y - labelH - (type === 'active' ? 10 : 15); 
+
+      // 標籤背景 (深色毛玻璃)
+      ctx.fillStyle = "rgba(10, 10, 10, 0.55)";
+      drawRoundedRect(ctx, labelX, labelY, labelW, labelH, 14);
+      ctx.fill();
+      
+      // 標籤細邊框
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // 標籤文字 (純白)
+      ctx.fillStyle = "#ffffff";
+      ctx.textBaseline = "middle";
+      ctx.fillText(txt, labelX + 10, labelY + labelH / 2 + 1);
+
+      // C. 即時狀態額外繪製：霓虹強化四角 (調用 drawVisionCorners)
+      if (type === 'active') {
+        drawVisionCorners(ctx, x, y, w, h, 18);
+      } else {
+        // 凍結狀態可以選擇加一個「雪花」圖示或「釘子」圖示
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 10px monospace";
+        ctx.fillText("❄️ FROZEN", labelX + labelW - 55, labelY + labelH / 2 + 1);
+      }
+
+      ctx.restore();
+    }
+
+    // --- 4. 【新增重大系統】Canvas 交互系統：凍結捕獲邏輯 ---
+    canvas.addEventListener('mousedown', (e) => handleCanvasClick(e, 'mouse'));
+    canvas.addEventListener('touchstart', (e) => handleCanvasClick(e, 'touch'));
+
+    function handleCanvasClick(e, inputType) {
+      if (!isDetecting || currentFrameDetections.length === 0) return;
+      if (!audioCtx) return; // 需要 AudioContext 才能觸發捕獲音效
+
+      // 取得點擊在 Canvas 螢幕座標上的位置
+      const rect = canvas.getBoundingClientRect();
+      let clickX, clickY;
+      
+      if (inputType === 'mouse') {
+        clickX = e.clientX - rect.left;
+        clickY = e.clientY - rect.top;
+      } else {
+        // 處理多指觸控，只取第一個手指
+        if (e.touches.length > 0) {
+          clickX = e.touches[0].clientX - rect.left;
+          clickY = e.touches[0].clientY - rect.top;
+        } else return;
+      }
+
+      // 用來記錄是否有捕獲成功
+      let capturedSuccessfully = false;
+
+      // 按順序遞迴所有即時偵測框 (後面的框疊在上面，所以優先判定)
+      // 為了判定正確，從後往前尋找
+      for (let i = currentFrameDetections.length - 1; i >= 0; i--) {
+        const tag = currentFrameDetections[i];
+        
+        // **核心交互算法**：檢查點擊點是否落在框框範圍內
+        if (clickX >= tag.x && clickX <= tag.x + tag.w &&
+            clickY >= tag.y && clickY <= tag.y + tag.h) {
+          
+          // 成功捕獲！
+
+          // 將其捕獲並存入 frozenTags 陣列 (它會自動成為「Style A: Frozen」)
+          frozenTags.push({...tag});
+          
+          capturedSuccessfully = true;
+
+          // 播放「捕獲成功」的立體聲音效 (一個科幻的「嗶」聲並快速淡出)
+          playCapturePing(audioCtx);
+
+          break; // 只捕獲最上層的一個框，不再繼續尋找
+        }
+      }
+
+      if (capturedSuccessfully) {
+        // 更新狀態文字通知使用者 (3秒後恢復)
+        const oldText = statusText.innerText;
+        statusText.innerText = "❄️ 空間標籤已凍結！ 移動相機可觀察。";
+        setTimeout(() => { if (isDetecting) statusText.innerText = oldText; }, 3000);
+      }
+    }
+
+    // 輔助函式：播放捕獲成功的科幻嗶聲
+    function playCapturePing(audioCtx) {
+      if (audioCtx.state === 'suspended') return;
+      const osc = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      osc.type = "square"; // 方波聽起來更像復古科幻
+      osc.frequency.setValueAtTime(1000, audioCtx.currentTime); // 1000Hz 嗶聲
+      osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.08); // 嗶——
+      gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1); // 快速淡出
+      osc.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+    }
+
+    // --- 輔助函式：繪圖輔助與轉角專用 ---
     function drawVisionCorners(ctx, x, y, w, h, len) {
       ctx.save();
-      ctx.strokeStyle = "#00ff88";
+      ctx.strokeStyle = "#00ff88"; // Vision 主題綠色
       ctx.lineWidth = 3.5;
-      ctx.lineCap = "round"; 
+      ctx.lineCap = "round"; // 讓線段末端圓潤
       ctx.shadowBlur = 8;
       ctx.shadowColor = "rgba(0, 255, 136, 0.5)";
 
-      ctx.beginPath(); ctx.moveTo(x, y + len); ctx.lineTo(x, y); ctx.lineTo(x + len, y); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x + w - len, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - len); ctx.stroke();
+      // 左上角
+      ctx.beginPath();
+      ctx.moveTo(x, y + len); ctx.lineTo(x, y); ctx.lineTo(x + len, y);
+      ctx.stroke();
+
+      // 右上角
+      ctx.beginPath();
+      ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len);
+      ctx.stroke();
+
+      // 左下角
+      ctx.beginPath();
+      ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h);
+      ctx.stroke();
+
+      // 右下角
+      ctx.beginPath();
+      ctx.moveTo(x + w - len, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - len);
+      ctx.stroke();
+
       ctx.restore();
     }
 
