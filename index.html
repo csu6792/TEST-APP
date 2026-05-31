@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>Vision AI | Spatial Freezer Tagging</title>
+  <title>Vision AI | Spatial Freezer Pro</title>
   
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
 
@@ -39,16 +39,10 @@
       position: fixed; inset: 0;
       background-image: radial-gradient(circle at 2px 2px, rgba(255,255,255,0.05) 1px, transparent 0);
       background-size: 40px 40px;
-      z-index: 3; pointer-events: none; opacity: 0.5;
+      z-index: 3; pointer-events: none; opacity: 0.4;
     }
-    .indicator {
-      position: absolute; width: 100%; height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
-      z-index: 4; pointer-events: none; animation: float 6s ease-in-out infinite;
-    }
-    @keyframes float { 0%, 100% { top: 30%; opacity: 0; } 50% { top: 70%; opacity: 1; } }
 
-    /* 3. 交互性 2D 偵測圖層 */
+    /* 3. 交互性 AR 偵測與凍結圖層 */
     canvas {
       position: absolute; inset: 0;
       z-index: 2; cursor: crosshair;
@@ -105,20 +99,18 @@
   </div>
 
   <div class="spatial-grid"></div>
-  <div class="indicator"></div>
-
   <canvas id="canvas"></canvas>
 
   <header class="header glass-panel">
     <div class="brand">
       <div class="dot"></div>
-      Spatial Freezer
+      Spatial Freezer Pro
     </div>
     <div id="fps">AI FPS: 0</div>
   </header>
 
   <footer class="bottom-controls glass-panel">
-    <div class="freeze-hint">指示：點擊任何綠色霓虹框可將其「凍結」並觸發聲音</div>
+    <div class="freeze-hint">提示：點擊綠框可凍結物體，點擊凍結標籤上的 ✕ 可將其刪除</div>
     <div class="status-msg" id="statusText">正在初始化 AI 主機...</div>
     <button id="startBtn" disabled>模型載入中...</button>
   </footer>
@@ -140,11 +132,10 @@
     tempCanvas.height = MODEL_SIZE;
     const tempCtx = tempCanvas.getContext("2d");
 
-    // 防爆優化記憶體緩衝區
     const inputBuffer = new Float32Array(3 * MODEL_SIZE * MODEL_SIZE);
 
-    let frozenTags = [];
-    let currentFrameDetections = [];
+    let frozenTags = [];       
+    let currentFrameDetections = []; 
 
     const classNames = [
       'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
@@ -159,123 +150,105 @@
       'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
     ];
 
-    // --- 1. 空間音效與語音系統 ---
+    // --- 1. 語音與音效系統 ---
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     let audioCtx = null;
 
-    // 【修改】現在語音只有在觸碰時才會被調用，去除了時間冷卻限制，讓點擊反應更即時
     function speakObject(label) {
+      window.speechSynthesis.cancel(); 
       const msg = new SpeechSynthesisUtterance(label);
       msg.lang = "en-US";
-      msg.rate = 1.1;
+      msg.rate = 1.15;
       msg.pitch = 1.2;
       window.speechSynthesis.speak(msg);
     }
 
-    // 【修改】立體聲音效也改為點擊時瞬間計算並播放
     function playSpatialPing(centerX, canvasW, distanceScale) {
       if (!audioCtx || audioCtx.state === 'suspended') return;
-
-      const panValue = (centerX / canvasW) * 2 - 1; // 計算物體在螢幕的左右方位
+      const panValue = (centerX / canvasW) * 2 - 1;
       const panner = audioCtx.createStereoPanner();
       panner.pan.setValueAtTime(panValue, audioCtx.currentTime);
 
       const osc = audioCtx.createOscillator();
       const gainNode = audioCtx.createGain();
-      
       osc.type = "sine";
-      // 根據物體大小（距離）改變頻率，越近（框越大）聲音越宏亮清脆
-      const baseFreq = 500 + (distanceScale * 300);
-      osc.frequency.setValueAtTime(baseFreq, audioCtx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(150, audioCtx.currentTime + 0.15);
-
-      const volume = Math.min(0.15 + (distanceScale * 0.15), 0.35);
-      gainNode.gain.setValueAtTime(volume, audioCtx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.18);
+      osc.frequency.setValueAtTime(550 + (distanceScale * 250), audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(120, audioCtx.currentTime + 0.15);
+      gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
 
       osc.connect(gainNode);
       gainNode.connect(panner);
       panner.connect(audioCtx.destination);
-      osc.start();
-      osc.stop(audioCtx.currentTime + 0.18);
+      osc.start(); osc.stop(audioCtx.currentTime + 0.15);
     }
 
-    // --- 2. YOLOv8 AI 模型系統 ---
+    // 【新增】刪除標籤時的專用音效（向下掃頻，聽起來像物體消散）
+    function playDeleteSound() {
+      if (!audioCtx || audioCtx.state === 'suspended') return;
+      const osc = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      osc.type = "triangle"; // 三角波聽起來比較柔和
+      osc.frequency.setValueAtTime(350, audioCtx.currentTime);
+      osc.frequency.linearRampToValueAtTime(80, audioCtx.currentTime + 0.12); // 音調往下降
+      gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+      osc.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      osc.start(); osc.stop(audioCtx.currentTime + 0.12);
+    }
+
+    // --- 2. AI 模型載入與啟動 ---
     async function loadModel() {
       try {
         startBtn.disabled = true;
-        startBtn.innerText = "AI 模型載入中...";
         ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
-
-        session = await ort.InferenceSession.create(
-          "./model/yolo26n.onnx", 
-          { executionProviders: ["wasm"] }
-        );
-
-        console.log("YOLO Model loaded");
+        session = await ort.InferenceSession.create("./model/yolo26n.onnx", { executionProviders: ["wasm"] });
         startBtn.disabled = false;
         startBtn.innerText = "開始空間偵測";
         statusText.innerText = "AI 空間主機已就緒";
       } catch (e) {
-        console.error("YOLO 載入失敗:", e);
-        startBtn.innerText = "載入失敗 (檢查模型檔案路徑)";
         statusText.innerText = "AI 模型載入失敗";
       }
     }
-
     loadModel();
 
     startBtn.onclick = async () => {
       if (isDetecting) return;
-
       if (!audioCtx) audioCtx = new AudioContext();
       if (audioCtx.state === 'suspended') await audioCtx.resume();
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" },
-          audio: false
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
         video.srcObject = stream;
         video.onloadedmetadata = () => {
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
           isDetecting = true;
-          statusText.innerText = "空間偵測中... (點擊霓虹框發聲並凍結)";
+          statusText.innerText = "偵測中... 點擊綠框可抓取該物體";
           detectFrame();
         };
-      } catch (err) {
-        console.error("相機啟動錯誤:", err);
-        alert("請確認相機權限已開啟");
-      }
+      } catch (err) { alert("請確認相機權限已開啟"); }
     };
 
     let lastFrameTime = performance.now();
     async function detectFrame() {
       if (!session || !isDetecting) return;
-
       const now = performance.now();
       fpsText.innerText = `AI FPS: ${Math.round(1000 / (now - lastFrameTime))}`;
       lastFrameTime = now;
 
-      const vW = video.videoWidth;
-      const vH = video.videoHeight;
+      const vW = video.videoWidth; const vH = video.videoHeight;
       const size = Math.min(vW, vH);
-      const sx = (vW - size) / 2;
-      const sy = (vH - size) / 2;
+      const sx = (vW - size) / 2; const sy = (vH - size) / 2;
 
       tempCtx.drawImage(video, sx, sy, size, size, 0, 0, MODEL_SIZE, MODEL_SIZE);
-      const imageData = tempCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE);
-      
-      const input = preprocess(imageData.data);
+      const input = preprocess(tempCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE).data);
       const tensor = new ort.Tensor("float32", input, [1, 3, MODEL_SIZE, MODEL_SIZE]);
 
       const outputs = await session.run({ images: tensor });
-      const outputData = outputs[Object.keys(outputs)[0]].cpuData;
+      processAndDrawBoxes(outputs[Object.keys(outputs)[0]].cpuData, sx, sy, size);
 
-      processAndDrawBoxes(outputData, sx, sy, size);
-
-      // 降頻喘息優化，確保順暢不當機
       setTimeout(detectFrame, 30);
     }
 
@@ -289,20 +262,15 @@
       return inputBuffer;
     }
 
-    // --- 3. 解析與綜合繪製（已移除自動聲音觸發） ---
+    // --- 3. 核心運算與繪製 ---
     function processAndDrawBoxes(data, sx, sy, size) {
       if (canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight) {
-        canvas.width = canvas.clientWidth;
-        canvas.height = canvas.clientHeight;
+        canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight;
       }
-
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      const videoW = video.videoWidth;
-      const videoH = video.videoHeight;
-      const canvasW = canvas.width;
-      const canvasH = canvas.height;
-
+      const videoW = video.videoWidth; const videoH = video.videoHeight;
+      const canvasW = canvas.width; const canvasH = canvas.height;
       const displayScale = Math.max(canvasW / videoW, canvasH / videoH);
       const xOffset = (canvasW - videoW * displayScale) / 2;
       const yOffset = (canvasH - videoH * displayScale) / 2;
@@ -311,163 +279,175 @@
       currentFrameDetections = [];
 
       for (let i = 0; i < data.length; i += 6) {
-        const score = data[i + 4];
-        if (score < 0.45) continue; 
+        if (data[i + 4] < 0.45) continue; 
 
-        const x_screen = ((data[i] * modelToVideoScale) + sx) * displayScale + xOffset;
-        const y_screen = ((data[i + 1] * modelToVideoScale) + sy) * displayScale + yOffset;
-        const w_screen = (data[i + 2] - data[i]) * modelToVideoScale * displayScale;
-        const h_screen = (data[i + 3] - data[i + 1]) * modelToVideoScale * displayScale;
-
-        const classId = Math.round(data[i + 5]);
-        const label = classNames[classId] || "Object";
+        const v_x = (data[i] * modelToVideoScale) + sx;
+        const v_y = (data[i + 1] * modelToVideoScale) + sy;
+        const v_w = (data[i + 2] - data[i]) * modelToVideoScale;
+        const v_h = (data[i + 3] - data[i + 1]) * modelToVideoScale;
 
         currentFrameDetections.push({
-          x: x_screen, y: y_screen, w: w_screen, h: h_screen, label: label, score: score
+          x: v_x * displayScale + xOffset, y: v_y * displayScale + yOffset,
+          w: v_w * displayScale, h: v_h * displayScale,
+          vx: v_x, vy: v_y, vw: v_w, vh: v_h, 
+          label: classNames[Math.round(data[i + 5])] || "Object",
+          score: data[i + 4]
         });
-        
-        // 【優化點】：原本在這裡的 speakObject 和 playSpatialPing 自動發聲邏輯已被安全移除。
       }
 
-      // 繪製凍結標籤
-      for (const tag of frozenTags) {
-        drawSingleVisualTag(ctx, tag, 'frozen');
-      }
-
-      // 繪製即時霓虹追蹤框
-      for (const tag of currentFrameDetections) {
-        drawSingleVisualTag(ctx, tag, 'active');
-      }
+      for (const tag of frozenTags) { drawSingleVisualTag(ctx, tag, 'frozen'); }
+      for (const tag of currentFrameDetections) { drawSingleVisualTag(ctx, tag, 'active'); }
     }
 
     function drawSingleVisualTag(ctx, tag, type) {
-      const { x, y, w, h, label, score } = tag;
+      const { x, y, w, h, label, score, imgSnippet } = tag;
 
       ctx.save();
-      ctx.globalAlpha = type === 'active' ? 1.0 : 0.45;
-      ctx.shadowBlur = type === 'active' ? 15 : 8;
-      ctx.shadowColor = type === 'active' ? "rgba(0, 0, 0, 0.4)" : "rgba(0,0,0,0.2)";
+      
+      // 繪製物體定格截圖
+      if (type === 'frozen' && imgSnippet) {
+        ctx.save();
+        drawRoundedRect(ctx, x, y, w, h, 12);
+        ctx.clip();
+        ctx.globalAlpha = 0.85; 
+        ctx.drawImage(imgSnippet, x, y, w, h);
+        ctx.restore();
+      }
 
-      // A. 主體圓角框線
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
-      ctx.lineWidth = type === 'active' ? 2 : 1.2;
+      // 外框樣式
+      ctx.globalAlpha = type === 'active' ? 1.0 : 0.6;
+      ctx.shadowBlur = type === 'active' ? 15 : 6;
+      ctx.shadowColor = type === 'active' ? "rgba(0,0,0,0.4)" : "rgba(0,0,0,0.2)";
+      ctx.strokeStyle = type === 'active' ? "rgba(255,255,255,0.8)" : "rgba(0,255,136,0.4)";
+      ctx.lineWidth = type === 'active' ? 2 : 1.5;
       drawRoundedRect(ctx, x, y, w, h, 12);
       ctx.stroke();
 
-      // B. 懸浮玻璃資訊標籤
+      // 懸浮文字標籤寬度計算
       ctx.font = "600 13px -apple-system, BlinkMacSystemFont, sans-serif";
       const txt = `${label.toUpperCase()} ${Math.round(score * 100)}%`;
-      const txtWidth = ctx.measureText(txt).width;
+      const txtW = ctx.measureText(txt).width;
       
-      const labelW = txtWidth + 20;
+      // 【修改】如果是凍結標籤，寬度額外加上 26 像素，用來容納 ✕ 按鈕
+      const labelW = txtW + 20 + (type === 'frozen' ? 26 : 0);
       const labelH = 28;
-      const labelX = x;
-      const labelY = y - labelH - (type === 'active' ? 10 : 15); 
+      const labelY = y - labelH - (type === 'active' ? 10 : 15);
 
-      ctx.fillStyle = "rgba(10, 10, 10, 0.55)";
-      drawRoundedRect(ctx, labelX, labelY, labelW, labelH, 14);
+      // 標籤背景
+      ctx.fillStyle = type === 'active' ? "rgba(10,10,10,0.6)" : "rgba(0,30,15,0.8)";
+      drawRoundedRect(ctx, x, labelY, labelW, labelH, 14);
       ctx.fill();
-      
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
       ctx.stroke();
 
+      // 填寫純白文字
       ctx.fillStyle = "#ffffff";
       ctx.textBaseline = "middle";
-      ctx.fillText(txt, labelX + 10, labelY + labelH / 2 + 1);
+      ctx.fillText(txt, x + 10, labelY + labelH / 2 + 1);
 
       if (type === 'active') {
         drawVisionCorners(ctx, x, y, w, h, 18);
       } else {
-        ctx.fillStyle = "#fff";
-        ctx.font = "bold 10px monospace";
-        ctx.fillText("❄️ FROZEN", labelX + labelW - 55, labelY + labelH / 2 + 1);
+        // --- 【新增】在凍結標籤右邊，畫上一個優雅的 ✕ 關閉按鈕 ---
+        const closeX = x + labelW - 18;
+        const closeY = labelY + labelH / 2;
+        
+        ctx.save();
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
+        ctx.lineWidth = 1.8;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        // 畫 ✕ 兩條斜線
+        ctx.moveTo(closeX - 4, closeY - 4); ctx.lineTo(closeX + 4, closeY + 4);
+        ctx.moveTo(closeX + 4, closeY - 4); ctx.lineTo(closeX - 4, closeY + 4);
+        ctx.stroke();
+        ctx.restore();
       }
 
       ctx.restore();
     }
 
-    // --- 4. Canvas 觸碰與點擊交互中心 ---
+    // --- 4. 點擊交互中心（整合刪除與擷取判定） ---
     canvas.addEventListener('mousedown', (e) => handleCanvasClick(e, 'mouse'));
-    canvas.addEventListener('touchstart', (e) => handleCanvasClick(e, 'touch'));
+    canvas.addEventListener('touchstart', (e) => {
+      if (e.cancelable) e.preventDefault(); 
+      handleCanvasClick(e, 'touch');
+    }, { passive: false });
 
     function handleCanvasClick(e, inputType) {
-      if (!isDetecting || currentFrameDetections.length === 0) return;
-      if (!audioCtx) return;
+      if (!isDetecting || !audioCtx) return;
 
       const rect = canvas.getBoundingClientRect();
-      let clickX, clickY;
-      
-      if (inputType === 'mouse') {
-        clickX = e.clientX - rect.left;
-        clickY = e.clientY - rect.top;
-      } else {
-        if (e.touches.length > 0) {
-          clickX = e.touches[0].clientX - rect.left;
-          clickY = e.touches[0].clientY - rect.top;
-        } else return;
-      }
+      let clickX = (inputType === 'mouse') ? e.clientX - rect.left : e.touches[0].clientX - rect.left;
+      let clickY = (inputType === 'mouse') ? e.clientY - rect.top : e.touches[0].clientY - rect.top;
 
-      let capturedSuccessfully = false;
-      let clickedTag = null;
+      // 🎯 【優先判定 A】：使用者是不是點擊了某個現有凍結標籤上的「✕ 按鈕」？
+      ctx.font = "600 13px -apple-system, BlinkMacSystemFont, sans-serif"; // 確保計算文字寬度基底正確
+      for (let i = frozenTags.length - 1; i >= 0; i--) {
+        const tag = frozenTags[i];
+        const txt = `${tag.label.toUpperCase()} ${Math.round(tag.score * 100)}%`;
+        const txtW = ctx.measureText(txt).width;
+        const labelW = txtW + 20 + 26; // 對應繪製時的總寬度
+        const labelH = 28;
+        const labelY = tag.y - labelH - 15;
 
-      // 由上往下判定點擊到哪一個即時方框
-      for (let i = currentFrameDetections.length - 1; i >= 0; i--) {
-        const tag = currentFrameDetections[i];
-        
-        if (clickX >= tag.x && clickX <= tag.x + tag.w &&
-            clickY >= tag.y && clickY <= tag.y + tag.h) {
+        // ✕ 按鈕在最右側的 28x28 範圍內
+        if (clickX >= (tag.x + labelW - 28) && clickX <= (tag.x + labelW) &&
+            clickY >= labelY && clickY <= (labelY + labelH)) {
           
-          frozenTags.push({...tag}); // 複製並加入凍結列表
-          clickedTag = tag;
-          capturedSuccessfully = true;
-          break; // 成功捕獲一個就停止
+          // 移除該凍結標籤
+          frozenTags.splice(i, 1);
+          playDeleteSound(); // 播放刪除音效
+          
+          statusText.innerText = "🗑️ 空間定格已解除";
+          setTimeout(() => { if (isDetecting) statusText.innerText = "偵測中... 點擊綠框可抓取該物體"; }, 2000);
+          return; // 💥 重要：點到刪除就直接結束函式，不往下走「建立新定格」的程式
         }
       }
 
-      // 【重大優化】：只有在成功觸碰物件框時，才在此處播放所有音效與語音
-      if (capturedSuccessfully && clickedTag) {
-        // 1. 朗讀該物件名稱
-        speakObject(clickedTag.label);
+      // 🎯 【次要判定 B】：如果沒點到刪除，檢查是不是點到了綠色的「即時追蹤框」來新增定格？
+      if (currentFrameDetections.length === 0) return;
+      for (let i = currentFrameDetections.length - 1; i >= 0; i--) {
+        const tag = currentFrameDetections[i];
+        
+        if (clickX >= tag.x && clickX <= tag.x + tag.w && clickY >= tag.y && clickY <= tag.y + tag.h) {
+          const frozenItem = { ...tag };
+          const snippetCanvas = document.createElement('canvas');
+          snippetCanvas.width = tag.w; snippetCanvas.height = tag.h;
+          const snippetCtx = snippetCanvas.getContext('2d');
+          
+          snippetCtx.drawImage(video, tag.vx, tag.vy, tag.vw, tag.vh, 0, 0, tag.w, tag.h);
+          frozenItem.imgSnippet = snippetCanvas; 
 
-        // 2. 依據點擊的位置與方框大小，播放帶有空間方位的立體聲音效
-        const centerX = clickedTag.x + clickedTag.w / 2;
-        const distanceScale = clickedTag.h / canvas.height;
-        playSpatialPing(centerX, canvas.width, distanceScale);
+          frozenTags.push(frozenItem);
+          if (frozenTags.length > 20) frozenTags.shift();
 
-        // 3. UI 狀態文字更新
-        const oldText = statusText.innerText;
-        statusText.innerText = `❄️ 已鎖定並分析：${clickedTag.label.toUpperCase()}`;
-        setTimeout(() => { if (isDetecting) statusText.innerText = oldText; }, 2500);
+          speakObject(tag.label);
+          playSpatialPing(tag.x + tag.w / 2, canvas.width, tag.h / canvas.height);
+
+          statusText.innerText = `❄️ 成功定格真實物件：${tag.label.toUpperCase()}`;
+          setTimeout(() => { if (isDetecting) statusText.innerText = "偵測中... 點擊綠框可抓取該物體"; }, 2500);
+          break;
+        }
       }
     }
 
-    // --- 5. 繪圖輔助工具函式 ---
+    // --- 5. 繪圖輔助 ---
     function drawVisionCorners(ctx, x, y, w, h, len) {
-      ctx.save();
-      ctx.strokeStyle = "#00ff88"; 
-      ctx.lineWidth = 3.5;
-      ctx.lineCap = "round"; 
-      ctx.shadowBlur = 8;
-      ctx.shadowColor = "rgba(0, 255, 136, 0.5)";
-
+      ctx.save(); ctx.strokeStyle = "#00ff88"; ctx.lineWidth = 3.5; ctx.lineCap = "round";
+      ctx.shadowBlur = 8; ctx.shadowColor = "rgba(0, 255, 136, 0.5)";
       ctx.beginPath(); ctx.moveTo(x, y + len); ctx.lineTo(x, y); ctx.lineTo(x + len, y); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h); stroke();
       ctx.beginPath(); ctx.moveTo(x + w - len, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - len); ctx.stroke();
       ctx.restore();
     }
 
     function drawRoundedRect(ctx, x, y, w, h, r) {
-      if (w < 2 * r) r = w / 2;
-      if (h < 2 * r) r = h / 2;
-      ctx.beginPath();
-      ctx.moveTo(x + r, y);
-      ctx.arcTo(x + w, y, x + w, y + h, r);
-      ctx.arcTo(x + w, y + h, x, y + h, r);
-      ctx.arcTo(x, y + h, x, y, r);
-      ctx.arcTo(x, y, x + w, y, r);
-      ctx.closePath();
+      if (w < 2 * r) r = w / 2; if (h < 2 * r) r = h / 2;
+      ctx.beginPath(); ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
     }
   </script>
 </body>
