@@ -28,13 +28,9 @@
       color: var(--system-white);
     }
 
-    /* 1. 底層相機畫面 */
-    .camera-view {
-      position: fixed; inset: 0; z-index: 1;
-    }
+    .camera-view { position: fixed; inset: 0; z-index: 1; }
     video { width: 100%; height: 100%; object-fit: cover; }
 
-    /* 2. 裝飾性空間網格 */
     .spatial-grid {
       position: fixed; inset: 0;
       background-image: radial-gradient(circle at 2px 2px, rgba(255,255,255,0.05) 1px, transparent 0);
@@ -42,13 +38,11 @@
       z-index: 3; pointer-events: none; opacity: 0.4;
     }
 
-    /* 3. 交互性 AR 偵測與凍結圖層 */
     canvas {
       position: absolute; inset: 0;
-      z-index: 2; cursor: crosshair;
+      z-index: 2; cursor: crosshair; touch-action: none;
     }
 
-    /* 4. VisionOS 漂浮 UI */
     .glass-panel {
       background: var(--glass-bg);
       backdrop-filter: blur(25px) saturate(180%);
@@ -110,7 +104,7 @@
   </header>
 
   <footer class="bottom-controls glass-panel">
-    <div class="freeze-hint">提示：點擊綠框可凍結物體，點擊凍結標籤上的 ✕ 可將其刪除</div>
+    <div class="freeze-hint">提示：點框定格、按住可自由拖移、點 ✕ 刪除</div>
     <div class="status-msg" id="statusText">正在初始化 AI 主機...</div>
     <button id="startBtn" disabled>模型載入中...</button>
   </footer>
@@ -137,6 +131,10 @@
     let frozenTags = [];       
     let currentFrameDetections = []; 
 
+    let draggingTag = null;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
+
     const classNames = [
       'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
       'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat',
@@ -154,7 +152,6 @@
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     let audioCtx = null;
 
-    // 英文名稱發聲
     function speakObject(label) {
       window.speechSynthesis.cancel(); 
       const msg = new SpeechSynthesisUtterance(label);
@@ -164,7 +161,6 @@
       window.speechSynthesis.speak(msg);
     }
 
-    // 物體定格 3D 環繞音效
     function playSpatialPing(centerX, canvasW, distanceScale) {
       if (!audioCtx || audioCtx.state === 'suspended') return;
       const panValue = (centerX / canvasW) * 2 - 1;
@@ -179,13 +175,10 @@
       gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
       gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
 
-      osc.connect(gainNode);
-      gainNode.connect(panner);
-      panner.connect(audioCtx.destination);
+      osc.connect(gainNode); gainNode.connect(panner); panner.connect(audioCtx.destination);
       osc.start(); osc.stop(audioCtx.currentTime + 0.15);
     }
 
-    // 物體刪除消散音效
     function playDeleteSound() {
       if (!audioCtx || audioCtx.state === 'suspended') return;
       const osc = audioCtx.createOscillator();
@@ -195,8 +188,7 @@
       osc.frequency.linearRampToValueAtTime(80, audioCtx.currentTime + 0.12); 
       gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime);
       gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
-      osc.connect(gainNode);
-      gainNode.connect(audioCtx.destination);
+      osc.connect(gainNode); gainNode.connect(audioCtx.destination);
       osc.start(); osc.stop(audioCtx.currentTime + 0.12);
     }
 
@@ -209,9 +201,7 @@
         startBtn.disabled = false;
         startBtn.innerText = "開始空間偵測";
         statusText.innerText = "AI 空間主機已就緒";
-      } catch (e) {
-        statusText.innerText = "AI 模型載入失敗";
-      }
+      } catch (e) { statusText.innerText = "AI 模型載入失敗"; }
     }
     loadModel();
 
@@ -224,10 +214,9 @@
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
         video.srcObject = stream;
         video.onloadedmetadata = () => {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
+          canvas.width = video.videoWidth; canvas.height = video.videoHeight;
           isDetecting = true;
-          statusText.innerText = "偵測中... 點擊綠框可抓取該物體";
+          statusText.innerText = "偵測中... 點擊綠框可定格，按住可拖移";
           detectFrame();
         };
       } catch (err) { alert("請確認相機權限已開啟"); }
@@ -282,18 +271,15 @@
 
       for (let i = 0; i < data.length; i += 6) {
         if (data[i + 4] < 0.45) continue; 
-
         const v_x = (data[i] * modelToVideoScale) + sx;
         const v_y = (data[i + 1] * modelToVideoScale) + sy;
         const v_w = (data[i + 2] - data[i]) * modelToVideoScale;
         const v_h = (data[i + 3] - data[i + 1]) * modelToVideoScale;
-
         currentFrameDetections.push({
           x: v_x * displayScale + xOffset, y: v_y * displayScale + yOffset,
           w: v_w * displayScale, h: v_h * displayScale,
           vx: v_x, vy: v_y, vw: v_w, vh: v_h, 
-          label: classNames[Math.round(data[i + 5])] || "Object",
-          score: data[i + 4]
+          label: classNames[Math.round(data[i + 5])] || "Object", score: data[i + 4]
         });
       }
 
@@ -303,118 +289,104 @@
 
     function drawSingleVisualTag(ctx, tag, type) {
       const { x, y, w, h, label, score, imgSnippet } = tag;
-
-      ctx.save();
+      const isBeingDragged = (tag === draggingTag);
       
-      // 繪製物體定格截圖
-      if (type === 'frozen' && imgSnippet) {
-        ctx.save();
-        drawRoundedRect(ctx, x, y, w, h, 12);
-        ctx.clip();
-        ctx.globalAlpha = 0.85; 
-        ctx.drawImage(imgSnippet, x, y, w, h);
-        ctx.restore();
+      ctx.save();
+      if (isBeingDragged) {
+        ctx.translate(x + w/2, y + h/2);
+        ctx.scale(1.03, 1.03);
+        ctx.translate(-(x + w/2), -(y + h/2));
       }
 
-      // 外框樣式
-      ctx.globalAlpha = type === 'active' ? 1.0 : 0.6;
-      ctx.shadowBlur = type === 'active' ? 15 : 6;
-      ctx.shadowColor = type === 'active' ? "rgba(0,0,0,0.4)" : "rgba(0,0,0,0.2)";
+      if (type === 'frozen' && imgSnippet) {
+        ctx.save(); drawRoundedRect(ctx, x, y, w, h, 12); ctx.clip();
+        ctx.globalAlpha = isBeingDragged ? 0.95 : 0.85; 
+        ctx.drawImage(imgSnippet, x, y, w, h); ctx.restore();
+      }
+
+      ctx.globalAlpha = type === 'active' ? 1.0 : (isBeingDragged ? 0.9 : 0.6);
+      ctx.shadowBlur = type === 'active' ? 15 : (isBeingDragged ? 25 : 6);
+      ctx.shadowColor = type === 'active' ? "rgba(0,0,0,0.4)" : (isBeingDragged ? "rgba(0,255,136,0.6)" : "rgba(0,0,0,0.2)");
       ctx.strokeStyle = type === 'active' ? "rgba(255,255,255,0.8)" : "rgba(0,255,136,0.4)";
       ctx.lineWidth = type === 'active' ? 2 : 1.5;
-      drawRoundedRect(ctx, x, y, w, h, 12);
-      ctx.stroke();
+      drawRoundedRect(ctx, x, y, w, h, 12); ctx.stroke();
 
-      // 懸浮文字標籤寬度計算
+      // 【修改點】文字內容移除了信心率百分比，只保留純物件名稱
       ctx.font = "600 13px -apple-system, BlinkMacSystemFont, sans-serif";
-      const txt = `${label.toUpperCase()} ${Math.round(score * 100)}%`;
+      const txt = label.toUpperCase(); 
       const txtW = ctx.measureText(txt).width;
-      
-      // 如果是凍結標籤，寬度額外加上空間容納 ✕ 按鈕
       const labelW = txtW + 20 + (type === 'frozen' ? 26 : 0);
       const labelH = 28;
       const labelY = y - labelH - (type === 'active' ? 10 : 15);
 
-      // 標籤背景
-      ctx.fillStyle = type === 'active' ? "rgba(10,10,10,0.6)" : "rgba(0,30,15,0.8)";
-      drawRoundedRect(ctx, x, labelY, labelW, labelH, 14);
-      ctx.fill();
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
-      ctx.stroke();
+      ctx.fillStyle = type === 'active' ? "rgba(10,10,10,0.6)" : (isBeingDragged ? "rgba(0,50,25,0.9)" : "rgba(0,30,15,0.8)");
+      drawRoundedRect(ctx, x, labelY, labelW, labelH, 14); ctx.fill();
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.2)"; ctx.stroke();
 
-      // 填寫文字
-      ctx.fillStyle = "#ffffff";
-      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#ffffff"; ctx.textBaseline = "middle";
       ctx.fillText(txt, x + 10, labelY + labelH / 2 + 1);
 
       if (type === 'active') {
         drawVisionCorners(ctx, x, y, w, h, 18);
       } else {
-        // 在凍結標籤右邊畫上 ✕ 關閉按鈕
-        const closeX = x + labelW - 18;
-        const closeY = labelY + labelH / 2;
-        
-        ctx.save();
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
-        ctx.lineWidth = 1.8;
-        ctx.lineCap = "round";
-        ctx.beginPath();
-        ctx.moveTo(closeX - 4, closeY - 4); ctx.lineTo(closeX + 4, closeY + 4);
-        ctx.moveTo(closeX + 4, closeY - 4); ctx.lineTo(closeX - 4, closeY + 4);
-        ctx.stroke();
-        ctx.restore();
+        const closeX = x + labelW - 18, closeY = labelY + labelH / 2;
+        ctx.save(); ctx.strokeStyle = "rgba(255, 255, 255, 0.6)"; ctx.lineWidth = 1.8; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(closeX - 4, closeY - 4); ctx.lineTo(closeX + 4, closeY + 4);
+        ctx.moveTo(closeX + 4, closeY - 4); ctx.lineTo(closeX - 4, closeY + 4); ctx.stroke(); ctx.restore();
       }
-
       ctx.restore();
     }
 
-    // --- 4. 點擊交互中心 ---
-    canvas.addEventListener('mousedown', (e) => handleCanvasClick(e, 'mouse'));
-    canvas.addEventListener('touchstart', (e) => {
-      if (e.cancelable) e.preventDefault(); 
-      handleCanvasClick(e, 'touch');
-    }, { passive: false });
-
-    function handleCanvasClick(e, inputType) {
-      if (!isDetecting || !audioCtx) return;
-
+    // --- 4. 拖移與點擊事件控制中心 ---
+    function getPointerPos(e, inputType) {
       const rect = canvas.getBoundingClientRect();
-      let clickX = (inputType === 'mouse') ? e.clientX - rect.left : e.touches[0].clientX - rect.left;
-      let clickY = (inputType === 'mouse') ? e.clientY - rect.top : e.touches[0].clientY - rect.top;
+      if (inputType === 'mouse') return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      if (e.touches && e.touches.length > 0) return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+      return { x: 0, y: 0 };
+    }
 
-      // 🎯 優先判定：點擊 ✕ 刪除按鈕
+    function handleDown(e, inputType) {
+      if (!isDetecting || !audioCtx) return;
+      const pos = getPointerPos(e, inputType);
+
       ctx.font = "600 13px -apple-system, BlinkMacSystemFont, sans-serif"; 
+      
       for (let i = frozenTags.length - 1; i >= 0; i--) {
         const tag = frozenTags[i];
-        const txt = `${tag.label.toUpperCase()} ${Math.round(tag.score * 100)}%`;
-        const txtW = ctx.measureText(txt).width;
-        const labelW = txtW + 20 + 26; 
+        // 【修改點】點擊判定的寬度計算同步移除百分比，維持點擊點精準度
+        const txt = tag.label.toUpperCase(); 
+        const labelW = ctx.measureText(txt).width + 20 + 26; 
         const labelH = 28;
         const labelY = tag.y - labelH - 15;
 
-        if (clickX >= (tag.x + labelW - 28) && clickX <= (tag.x + labelW) &&
-            clickY >= labelY && clickY <= (labelY + labelH)) {
-          
+        if (pos.x >= (tag.x + labelW - 28) && pos.x <= (tag.x + labelW) &&
+            pos.y >= labelY && pos.y <= (labelY + labelH)) {
           frozenTags.splice(i, 1);
           playDeleteSound(); 
           statusText.innerText = "🗑️ 空間定格已解除";
-          setTimeout(() => { if (isDetecting) statusText.innerText = "偵測中... 點擊綠框可抓取該物體"; }, 2000);
           return; 
+        }
+
+        if ((pos.x >= tag.x && pos.x <= tag.x + tag.w && pos.y >= tag.y && pos.y <= tag.y + tag.h) ||
+            (pos.x >= tag.x && pos.x <= tag.x + labelW && pos.y >= labelY && pos.y <= labelY + labelH)) {
+          
+          draggingTag = tag;
+          dragOffsetX = pos.x - tag.x;
+          dragOffsetY = pos.y - tag.y;
+          
+          frozenTags.splice(i, 1);
+          frozenTags.push(tag);
+          return;
         }
       }
 
-      // 🎯 次要判定：點擊綠框定格物體
-      if (currentFrameDetections.length === 0) return;
       for (let i = currentFrameDetections.length - 1; i >= 0; i--) {
         const tag = currentFrameDetections[i];
-        
-        if (clickX >= tag.x && clickX <= tag.x + tag.w && clickY >= tag.y && clickY <= tag.y + tag.h) {
+        if (pos.x >= tag.x && pos.x <= tag.x + tag.w && pos.y >= tag.y && pos.y <= tag.y + tag.h) {
           const frozenItem = { ...tag };
           const snippetCanvas = document.createElement('canvas');
           snippetCanvas.width = tag.w; snippetCanvas.height = tag.h;
-          const snippetCtx = snippetCanvas.getContext('2d');
-          
-          snippetCtx.drawImage(video, tag.vx, tag.vy, tag.vw, tag.vh, 0, 0, tag.w, tag.h);
+          snippetCanvas.getContext('2d').drawImage(video, tag.vx, tag.vy, tag.vw, tag.vh, 0, 0, tag.w, tag.h);
           frozenItem.imgSnippet = snippetCanvas; 
 
           frozenTags.push(frozenItem);
@@ -422,13 +394,36 @@
 
           speakObject(tag.label);
           playSpatialPing(tag.x + tag.w / 2, canvas.width, tag.h / canvas.height);
-
-          statusText.innerText = `❄️ 成功定格真實物件：${tag.label.toUpperCase()}`;
-          setTimeout(() => { if (isDetecting) statusText.innerText = "偵測中... 點擊綠框可抓取該物體"; }, 2500);
-          break;
+          statusText.innerText = `❄️ 成功定格：${tag.label.toUpperCase()}`;
+          return;
         }
       }
     }
+
+    function handleMove(e, inputType) {
+      if (!draggingTag) return;
+      const pos = getPointerPos(e, inputType);
+      draggingTag.x = pos.x - dragOffsetX;
+      draggingTag.y = pos.y - dragOffsetY;
+    }
+
+    function handleUp() { draggingTag = null; }
+
+    canvas.addEventListener('mousedown', (e) => handleDown(e, 'mouse'));
+    canvas.addEventListener('mousemove', (e) => handleMove(e, 'mouse'));
+    canvas.addEventListener('mouseup', handleUp);
+    canvas.addEventListener('mouseleave', handleUp);
+
+    canvas.addEventListener('touchstart', (e) => {
+      if (e.cancelable) e.preventDefault(); 
+      handleDown(e, 'touch');
+    }, { passive: false });
+    canvas.addEventListener('touchmove', (e) => {
+      if (e.cancelable) e.preventDefault(); 
+      handleMove(e, 'touch');
+    }, { passive: false });
+    canvas.addEventListener('touchend', handleUp);
+    canvas.addEventListener('touchcancel', handleUp);
 
     // --- 5. 繪圖輔助 ---
     function drawVisionCorners(ctx, x, y, w, h, len) {
@@ -436,12 +431,10 @@
       ctx.shadowBlur = 8; ctx.shadowColor = "rgba(0, 255, 136, 0.5)";
       ctx.beginPath(); ctx.moveTo(x, y + len); ctx.lineTo(x, y); ctx.lineTo(x + len, y); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len); ctx.stroke();
-      // 【修復核心點】這裡原本寫成孤兒 stroke(); 導致錯誤，已完美加上 ctx.
       ctx.beginPath(); ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(x + w - len, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - len); ctx.stroke();
       ctx.restore();
     }
-
     function drawRoundedRect(ctx, x, y, w, h, r) {
       if (w < 2 * r) r = w / 2; if (h < 2 * r) r = h / 2;
       ctx.beginPath(); ctx.moveTo(x + r, y);
