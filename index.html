@@ -154,6 +154,7 @@
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     let audioCtx = null;
 
+    // 英文名稱發聲
     function speakObject(label) {
       window.speechSynthesis.cancel(); 
       const msg = new SpeechSynthesisUtterance(label);
@@ -163,6 +164,7 @@
       window.speechSynthesis.speak(msg);
     }
 
+    // 物體定格 3D 環繞音效
     function playSpatialPing(centerX, canvasW, distanceScale) {
       if (!audioCtx || audioCtx.state === 'suspended') return;
       const panValue = (centerX / canvasW) * 2 - 1;
@@ -183,14 +185,14 @@
       osc.start(); osc.stop(audioCtx.currentTime + 0.15);
     }
 
-    // 【新增】刪除標籤時的專用音效（向下掃頻，聽起來像物體消散）
+    // 物體刪除消散音效
     function playDeleteSound() {
       if (!audioCtx || audioCtx.state === 'suspended') return;
       const osc = audioCtx.createOscillator();
       const gainNode = audioCtx.createGain();
-      osc.type = "triangle"; // 三角波聽起來比較柔和
+      osc.type = "triangle"; 
       osc.frequency.setValueAtTime(350, audioCtx.currentTime);
-      osc.frequency.linearRampToValueAtTime(80, audioCtx.currentTime + 0.12); // 音調往下降
+      osc.frequency.linearRampToValueAtTime(80, audioCtx.currentTime + 0.12); 
       gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime);
       gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
       osc.connect(gainNode);
@@ -328,7 +330,7 @@
       const txt = `${label.toUpperCase()} ${Math.round(score * 100)}%`;
       const txtW = ctx.measureText(txt).width;
       
-      // 【修改】如果是凍結標籤，寬度額外加上 26 像素，用來容納 ✕ 按鈕
+      // 如果是凍結標籤，寬度額外加上空間容納 ✕ 按鈕
       const labelW = txtW + 20 + (type === 'frozen' ? 26 : 0);
       const labelH = 28;
       const labelY = y - labelH - (type === 'active' ? 10 : 15);
@@ -340,7 +342,7 @@
       ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
       ctx.stroke();
 
-      // 填寫純白文字
+      // 填寫文字
       ctx.fillStyle = "#ffffff";
       ctx.textBaseline = "middle";
       ctx.fillText(txt, x + 10, labelY + labelH / 2 + 1);
@@ -348,7 +350,7 @@
       if (type === 'active') {
         drawVisionCorners(ctx, x, y, w, h, 18);
       } else {
-        // --- 【新增】在凍結標籤右邊，畫上一個優雅的 ✕ 關閉按鈕 ---
+        // 在凍結標籤右邊畫上 ✕ 關閉按鈕
         const closeX = x + labelW - 18;
         const closeY = labelY + labelH / 2;
         
@@ -357,7 +359,6 @@
         ctx.lineWidth = 1.8;
         ctx.lineCap = "round";
         ctx.beginPath();
-        // 畫 ✕ 兩條斜線
         ctx.moveTo(closeX - 4, closeY - 4); ctx.lineTo(closeX + 4, closeY + 4);
         ctx.moveTo(closeX + 4, closeY - 4); ctx.lineTo(closeX - 4, closeY + 4);
         ctx.stroke();
@@ -367,7 +368,7 @@
       ctx.restore();
     }
 
-    // --- 4. 點擊交互中心（整合刪除與擷取判定） ---
+    // --- 4. 點擊交互中心 ---
     canvas.addEventListener('mousedown', (e) => handleCanvasClick(e, 'mouse'));
     canvas.addEventListener('touchstart', (e) => {
       if (e.cancelable) e.preventDefault(); 
@@ -381,31 +382,28 @@
       let clickX = (inputType === 'mouse') ? e.clientX - rect.left : e.touches[0].clientX - rect.left;
       let clickY = (inputType === 'mouse') ? e.clientY - rect.top : e.touches[0].clientY - rect.top;
 
-      // 🎯 【優先判定 A】：使用者是不是點擊了某個現有凍結標籤上的「✕ 按鈕」？
-      ctx.font = "600 13px -apple-system, BlinkMacSystemFont, sans-serif"; // 確保計算文字寬度基底正確
+      // 🎯 優先判定：點擊 ✕ 刪除按鈕
+      ctx.font = "600 13px -apple-system, BlinkMacSystemFont, sans-serif"; 
       for (let i = frozenTags.length - 1; i >= 0; i--) {
         const tag = frozenTags[i];
         const txt = `${tag.label.toUpperCase()} ${Math.round(tag.score * 100)}%`;
         const txtW = ctx.measureText(txt).width;
-        const labelW = txtW + 20 + 26; // 對應繪製時的總寬度
+        const labelW = txtW + 20 + 26; 
         const labelH = 28;
         const labelY = tag.y - labelH - 15;
 
-        // ✕ 按鈕在最右側的 28x28 範圍內
         if (clickX >= (tag.x + labelW - 28) && clickX <= (tag.x + labelW) &&
             clickY >= labelY && clickY <= (labelY + labelH)) {
           
-          // 移除該凍結標籤
           frozenTags.splice(i, 1);
-          playDeleteSound(); // 播放刪除音效
-          
+          playDeleteSound(); 
           statusText.innerText = "🗑️ 空間定格已解除";
           setTimeout(() => { if (isDetecting) statusText.innerText = "偵測中... 點擊綠框可抓取該物體"; }, 2000);
-          return; // 💥 重要：點到刪除就直接結束函式，不往下走「建立新定格」的程式
+          return; 
         }
       }
 
-      // 🎯 【次要判定 B】：如果沒點到刪除，檢查是不是點到了綠色的「即時追蹤框」來新增定格？
+      // 🎯 次要判定：點擊綠框定格物體
       if (currentFrameDetections.length === 0) return;
       for (let i = currentFrameDetections.length - 1; i >= 0; i--) {
         const tag = currentFrameDetections[i];
@@ -438,7 +436,8 @@
       ctx.shadowBlur = 8; ctx.shadowColor = "rgba(0, 255, 136, 0.5)";
       ctx.beginPath(); ctx.moveTo(x, y + len); ctx.lineTo(x, y); ctx.lineTo(x + len, y); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h); stroke();
+      // 【修復核心點】這裡原本寫成孤兒 stroke(); 導致錯誤，已完美加上 ctx.
+      ctx.beginPath(); ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(x + w - len, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - len); ctx.stroke();
       ctx.restore();
     }
