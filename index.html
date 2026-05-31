@@ -28,19 +28,27 @@
       color: var(--system-white);
     }
 
-    .camera-view { position: fixed; inset: 0; z-index: 1; }
-    video { width: 100%; height: 100%; object-fit: cover; }
+    /* 確保所有圖層嚴格對齊，消除手機網址列造成的滑動錯位 */
+    .camera-container {
+      position: fixed; inset: 0; width: 100vw; height: 100dvh;
+      overflow: hidden; z-index: 1;
+    }
+
+    video {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      object-fit: cover;
+    }
 
     .spatial-grid {
-      position: fixed; inset: 0;
+      position: absolute; inset: 0;
       background-image: radial-gradient(circle at 2px 2px, rgba(255,255,255,0.05) 1px, transparent 0);
       background-size: 40px 40px;
-      z-index: 3; pointer-events: none; opacity: 0.4;
+      z-index: 2; pointer-events: none; opacity: 0.4;
     }
 
     canvas {
-      position: absolute; inset: 0;
-      z-index: 2; cursor: crosshair; touch-action: none;
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      z-index: 3; cursor: crosshair; touch-action: none;
     }
 
     .glass-panel {
@@ -88,12 +96,11 @@
 </head>
 
 <body>
-  <div class="camera-view">
+  <div class="camera-container">
     <video id="video" autoplay playsinline muted></video>
+    <div class="spatial-grid"></div>
+    <canvas id="canvas"></canvas>
   </div>
-
-  <div class="spatial-grid"></div>
-  <canvas id="canvas"></canvas>
 
   <header class="header glass-panel">
     <div class="brand">
@@ -112,7 +119,7 @@
   <script>
     const video = document.getElementById("video");
     const canvas = document.getElementById("canvas");
-    const ctx = canvas.getContext("2d", { alpha: true, desynchronized: true }); // 效能優化：降低畫布延遲
+    const ctx = canvas.getContext("2d", { alpha: true, desynchronized: true }); 
     const startBtn = document.getElementById("startBtn");
     const fpsText = document.getElementById("fps");
     const statusText = document.getElementById("statusText");
@@ -120,19 +127,17 @@
     const MODEL_SIZE = 640;
     let session;
     let isDetecting = false;
-    let isProcessingFrame = false; // 效能優化：執行緒鎖
+    let isProcessingFrame = false;
 
     const tempCanvas = document.createElement("canvas");
     tempCanvas.width = MODEL_SIZE;
     tempCanvas.height = MODEL_SIZE;
-    const tempCtx = tempCanvas.getContext("2d", { willReadFrequently: true }); // 效能優化：提示瀏覽器頻繁讀取
+    const tempCtx = tempCanvas.getContext("2d", { willReadFrequently: true }); 
 
-    // 重複使用的記憶體緩衝區
     const inputBuffer = new Float32Array(3 * MODEL_SIZE * MODEL_SIZE);
 
     let frozenTags = [];       
     let currentFrameDetections = []; 
-
     let draggingTag = null;
     let dragOffsetX = 0;
     let dragOffsetY = 0;
@@ -150,7 +155,6 @@
       'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
     ];
 
-    // --- 1. 語音與音效系統 ---
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     let audioCtx = null;
 
@@ -192,24 +196,16 @@
       osc.start(); osc.stop(audioCtx.currentTime + 0.12);
     }
 
-    // --- 2. AI 模型載入與啟動 ---
     async function loadModel() {
       try {
         startBtn.disabled = true;
         ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
-        
-        // 效能優化：設定 ORT 的執行緒數量與優化等級
         const threads = navigator.hardwareConcurrency ? Math.max(1, navigator.hardwareConcurrency - 2) : 2;
-        const options = {
-          executionProviders: ["wasm"],
-          graphOptimizationLevel: "all",
-          intraOpNumThreads: threads
-        };
-        
+        const options = { executionProviders: ["wasm"], graphOptimizationLevel: "all", intraOpNumThreads: threads };
         session = await ort.InferenceSession.create("./model/yolo26n.onnx", options);
         startBtn.disabled = false;
         startBtn.innerText = "開始空間偵測";
-        statusText.innerText = "AI 空間主機已就緒 (高效能模式)";
+        statusText.innerText = "AI 空間主機已就緒 (對位優化版)";
       } catch (e) { statusText.innerText = "AI 模型載入失敗"; console.error(e); }
     }
     loadModel();
@@ -223,10 +219,9 @@
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
         video.srcObject = stream;
         video.onloadedmetadata = () => {
-          canvas.width = video.videoWidth; canvas.height = video.videoHeight;
           isDetecting = true;
           statusText.innerText = "偵測中... 點擊綠框可定格，按住可拖移";
-          requestAnimationFrame(detectFrame); // 效能優化：啟動對齊螢幕刷新率的偵測迴圈
+          requestAnimationFrame(detectFrame); 
         };
       } catch (err) { alert("請確認相機權限已開啟"); }
     };
@@ -234,12 +229,10 @@
     let lastFrameTime = performance.now();
     
     async function detectFrame() {
-      // 效能優化：如果模型沒準備好，或「上一幀還在算」，就直接跳過，絕不塞車當機
       if (!session || !isDetecting || isProcessingFrame) {
         if (isDetecting) requestAnimationFrame(detectFrame);
         return;
       }
-      
       isProcessingFrame = true;
 
       try {
@@ -265,14 +258,13 @@
         console.warn("偵測跳幀保護:", e);
       } finally {
         isProcessingFrame = false;
-        requestAnimationFrame(detectFrame); // 算完才呼叫下一幀
+        requestAnimationFrame(detectFrame);
       }
     }
 
-    // 效能優化：加速預處理迴圈
     function preprocess(data) {
       const frameSize = MODEL_SIZE * MODEL_SIZE;
-      const INV_255 = 1.0 / 255.0; // 避免在迴圈內做除法
+      const INV_255 = 1.0 / 255.0; 
       for (let i = 0; i < frameSize; i++) {
         const idx = i * 4;
         inputBuffer[i]                 = data[idx]     * INV_255; 
@@ -282,38 +274,66 @@
       return inputBuffer;
     }
 
-    // --- 3. 核心運算與繪製 ---
     function processAndDrawBoxes(data, sx, sy, size) {
-      if (canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight) {
-        canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight;
+      const rect = video.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      
+      // 【關鍵修復】透過 DPR 強制 Canvas 內部解析度與真實物理像素對齊
+      if (canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr)) {
+        canvas.width = Math.round(rect.width * dpr);
+        canvas.height = Math.round(rect.height * dpr);
+        canvas.style.width = `${rect.width}px`;
+        canvas.style.height = `${rect.height}px`;
       }
+
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      const videoW = video.videoWidth; const videoH = video.videoHeight;
-      const canvasW = canvas.width; const canvasH = canvas.height;
-      const displayScale = Math.max(canvasW / videoW, canvasH / videoH);
-      const xOffset = (canvasW - videoW * displayScale) / 2;
-      const yOffset = (canvasH - videoH * displayScale) / 2;
+      const vW = video.videoWidth; 
+      const vH = video.videoHeight;
+      if (!vW || !vH) return;
+
+      const cssWidth = rect.width;
+      const cssHeight = rect.height;
+
+      // 【關鍵修復】精準計算 object-fit: cover 的縮放與邊界溢出
+      const displayScale = Math.max(cssWidth / vW, cssHeight / vH);
+      const renderedVideoWidth = vW * displayScale;
+      const renderedVideoHeight = vH * displayScale;
+      const xOffset = (cssWidth - renderedVideoWidth) / 2;
+      const yOffset = (cssHeight - renderedVideoHeight) / 2;
       const modelToVideoScale = size / 640;
 
       currentFrameDetections = [];
 
       for (let i = 0; i < data.length; i += 6) {
         if (data[i + 4] < 0.45) continue; 
+        
+        // 解析在原始視訊畫布上的座標
         const v_x = (data[i] * modelToVideoScale) + sx;
         const v_y = (data[i + 1] * modelToVideoScale) + sy;
         const v_w = (data[i + 2] - data[i]) * modelToVideoScale;
         const v_h = (data[i + 3] - data[i + 1]) * modelToVideoScale;
+        
+        // 儲存的 x, y 嚴格使用 CSS 座標系（與觸控判定共用同一個維度）
         currentFrameDetections.push({
-          x: v_x * displayScale + xOffset, y: v_y * displayScale + yOffset,
-          w: v_w * displayScale, h: v_h * displayScale,
+          x: v_x * displayScale + xOffset, 
+          y: v_y * displayScale + yOffset,
+          w: v_w * displayScale, 
+          h: v_h * displayScale,
           vx: v_x, vy: v_y, vw: v_w, vh: v_h, 
-          label: classNames[Math.round(data[i + 5])] || "Object", score: data[i + 4]
+          label: classNames[Math.round(data[i + 5])] || "Object", 
+          score: data[i + 4]
         });
       }
 
+      // 【關鍵修復】繪製前將 Canvas Context 依據 DPR 放大，這樣 CSS 座標就能無縫銜接
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      
       for (const tag of frozenTags) { drawSingleVisualTag(ctx, tag, 'frozen'); }
       for (const tag of currentFrameDetections) { drawSingleVisualTag(ctx, tag, 'active'); }
+      
+      ctx.restore();
     }
 
     function drawSingleVisualTag(ctx, tag, type) {
@@ -365,9 +385,10 @@
       ctx.restore();
     }
 
-    // --- 4. 拖移與點擊事件控制中心 ---
+    // --- 事件控制中心 ---
     function getPointerPos(e, inputType) {
       const rect = canvas.getBoundingClientRect();
+      // 在嚴格 CSS 對位下，滑鼠座標可以直接精準反映在畫布座標
       if (inputType === 'mouse') return { x: e.clientX - rect.left, y: e.clientY - rect.top };
       if (e.touches && e.touches.length > 0) return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
       return { x: 0, y: 0 };
@@ -377,8 +398,14 @@
       if (!isDetecting || !audioCtx) return;
       const pos = getPointerPos(e, inputType);
 
+      // 暫時套用字體來取得精準的文字寬度用於邊界判定
+      ctx.save();
+      const dpr = window.devicePixelRatio || 1;
+      ctx.scale(dpr, dpr);
       ctx.font = "600 13px -apple-system, BlinkMacSystemFont, sans-serif"; 
       
+      let actionTaken = false;
+
       for (let i = frozenTags.length - 1; i >= 0; i--) {
         const tag = frozenTags[i];
         const txt = tag.label.toUpperCase(); 
@@ -386,53 +413,51 @@
         const labelH = 28;
         const labelY = tag.y - labelH - 15;
 
-        // 點擊刪除按鈕
         if (pos.x >= (tag.x + labelW - 28) && pos.x <= (tag.x + labelW) &&
             pos.y >= labelY && pos.y <= (labelY + labelH)) {
-          
-          // 效能優化：主動清除不再使用的圖形元素釋放記憶體
           if (tag.imgSnippet) { tag.imgSnippet.width = 0; tag.imgSnippet = null; }
           frozenTags.splice(i, 1);
-          
           playDeleteSound(); 
           statusText.innerText = "🗑️ 空間定格已解除";
-          return; 
+          actionTaken = true; break;
         }
 
-        // 點擊拖移
         if ((pos.x >= tag.x && pos.x <= tag.x + tag.w && pos.y >= tag.y && pos.y <= tag.y + tag.h) ||
             (pos.x >= tag.x && pos.x <= tag.x + labelW && pos.y >= labelY && pos.y <= labelY + labelH)) {
           draggingTag = tag;
           dragOffsetX = pos.x - tag.x; dragOffsetY = pos.y - tag.y;
           frozenTags.splice(i, 1); frozenTags.push(tag);
-          return;
+          actionTaken = true; break;
         }
       }
 
-      // 新增定格
-      for (let i = currentFrameDetections.length - 1; i >= 0; i--) {
-        const tag = currentFrameDetections[i];
-        if (pos.x >= tag.x && pos.x <= tag.x + tag.w && pos.y >= tag.y && pos.y <= tag.y + tag.h) {
-          const frozenItem = { ...tag };
-          const snippetCanvas = document.createElement('canvas');
-          snippetCanvas.width = tag.w; snippetCanvas.height = tag.h;
-          snippetCanvas.getContext('2d').drawImage(video, tag.vx, tag.vy, tag.vw, tag.vh, 0, 0, tag.w, tag.h);
-          frozenItem.imgSnippet = snippetCanvas; 
+      if (!actionTaken) {
+        for (let i = currentFrameDetections.length - 1; i >= 0; i--) {
+          const tag = currentFrameDetections[i];
+          if (pos.x >= tag.x && pos.x <= tag.x + tag.w && pos.y >= tag.y && pos.y <= tag.y + tag.h) {
+            const frozenItem = { ...tag };
+            const snippetCanvas = document.createElement('canvas');
+            const dprSnippet = window.devicePixelRatio || 1;
+            // 擷取時給予高畫質快取
+            snippetCanvas.width = tag.w * dprSnippet; 
+            snippetCanvas.height = tag.h * dprSnippet;
+            snippetCanvas.getContext('2d').drawImage(video, tag.vx, tag.vy, tag.vw, tag.vh, 0, 0, snippetCanvas.width, snippetCanvas.height);
+            frozenItem.imgSnippet = snippetCanvas; 
 
-          frozenTags.push(frozenItem);
-          
-          // 效能優化：當定格數量過多時，主動回收被擠掉的畫布
-          if (frozenTags.length > 20) {
-            const removed = frozenTags.shift();
-            if (removed.imgSnippet) { removed.imgSnippet.width = 0; removed.imgSnippet = null; }
+            frozenTags.push(frozenItem);
+            if (frozenTags.length > 20) {
+              const removed = frozenTags.shift();
+              if (removed.imgSnippet) { removed.imgSnippet.width = 0; removed.imgSnippet = null; }
+            }
+
+            speakObject(tag.label);
+            playSpatialPing(tag.x + tag.w / 2, canvas.getBoundingClientRect().width, tag.h / canvas.getBoundingClientRect().height);
+            statusText.innerText = `❄️ 成功定格：${tag.label.toUpperCase()}`;
+            break;
           }
-
-          speakObject(tag.label);
-          playSpatialPing(tag.x + tag.w / 2, canvas.width, tag.h / canvas.height);
-          statusText.innerText = `❄️ 成功定格：${tag.label.toUpperCase()}`;
-          return;
         }
       }
+      ctx.restore();
     }
 
     function handleMove(e, inputType) {
@@ -452,7 +477,6 @@
     canvas.addEventListener('touchend', handleUp);
     canvas.addEventListener('touchcancel', handleUp);
 
-    // --- 5. 繪圖輔助 ---
     function drawVisionCorners(ctx, x, y, w, h, len) {
       ctx.save(); ctx.strokeStyle = "#00ff88"; ctx.lineWidth = 3.5; ctx.lineCap = "round";
       ctx.shadowBlur = 8; ctx.shadowColor = "rgba(0, 255, 136, 0.5)";
