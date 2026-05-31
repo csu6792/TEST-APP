@@ -112,7 +112,7 @@
   <script>
     const video = document.getElementById("video");
     const canvas = document.getElementById("canvas");
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { alpha: true, desynchronized: true }); // 效能優化：降低畫布延遲
     const startBtn = document.getElementById("startBtn");
     const fpsText = document.getElementById("fps");
     const statusText = document.getElementById("statusText");
@@ -120,12 +120,14 @@
     const MODEL_SIZE = 640;
     let session;
     let isDetecting = false;
+    let isProcessingFrame = false; // 效能優化：執行緒鎖
 
     const tempCanvas = document.createElement("canvas");
     tempCanvas.width = MODEL_SIZE;
     tempCanvas.height = MODEL_SIZE;
-    const tempCtx = tempCanvas.getContext("2d");
+    const tempCtx = tempCanvas.getContext("2d", { willReadFrequently: true }); // 效能優化：提示瀏覽器頻繁讀取
 
+    // 重複使用的記憶體緩衝區
     const inputBuffer = new Float32Array(3 * MODEL_SIZE * MODEL_SIZE);
 
     let frozenTags = [];       
@@ -155,9 +157,7 @@
     function speakObject(label) {
       window.speechSynthesis.cancel(); 
       const msg = new SpeechSynthesisUtterance(label);
-      msg.lang = "en-US";
-      msg.rate = 1.15;
-      msg.pitch = 1.2;
+      msg.lang = "en-US"; msg.rate = 1.15; msg.pitch = 1.2;
       window.speechSynthesis.speak(msg);
     }
 
@@ -197,11 +197,20 @@
       try {
         startBtn.disabled = true;
         ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
-        session = await ort.InferenceSession.create("./model/yolo26n.onnx", { executionProviders: ["wasm"] });
+        
+        // 效能優化：設定 ORT 的執行緒數量與優化等級
+        const threads = navigator.hardwareConcurrency ? Math.max(1, navigator.hardwareConcurrency - 2) : 2;
+        const options = {
+          executionProviders: ["wasm"],
+          graphOptimizationLevel: "all",
+          intraOpNumThreads: threads
+        };
+        
+        session = await ort.InferenceSession.create("./model/yolo26n.onnx", options);
         startBtn.disabled = false;
         startBtn.innerText = "開始空間偵測";
-        statusText.innerText = "AI 空間主機已就緒";
-      } catch (e) { statusText.innerText = "AI 模型載入失敗"; }
+        statusText.innerText = "AI 空間主機已就緒 (高效能模式)";
+      } catch (e) { statusText.innerText = "AI 模型載入失敗"; console.error(e); }
     }
     loadModel();
 
@@ -217,38 +226,58 @@
           canvas.width = video.videoWidth; canvas.height = video.videoHeight;
           isDetecting = true;
           statusText.innerText = "偵測中... 點擊綠框可定格，按住可拖移";
-          detectFrame();
+          requestAnimationFrame(detectFrame); // 效能優化：啟動對齊螢幕刷新率的偵測迴圈
         };
       } catch (err) { alert("請確認相機權限已開啟"); }
     };
 
     let lastFrameTime = performance.now();
+    
     async function detectFrame() {
-      if (!session || !isDetecting) return;
-      const now = performance.now();
-      fpsText.innerText = `AI FPS: ${Math.round(1000 / (now - lastFrameTime))}`;
-      lastFrameTime = now;
+      // 效能優化：如果模型沒準備好，或「上一幀還在算」，就直接跳過，絕不塞車當機
+      if (!session || !isDetecting || isProcessingFrame) {
+        if (isDetecting) requestAnimationFrame(detectFrame);
+        return;
+      }
+      
+      isProcessingFrame = true;
 
-      const vW = video.videoWidth; const vH = video.videoHeight;
-      const size = Math.min(vW, vH);
-      const sx = (vW - size) / 2; const sy = (vH - size) / 2;
+      try {
+        const now = performance.now();
+        fpsText.innerText = `AI FPS: ${Math.round(1000 / (now - lastFrameTime))}`;
+        lastFrameTime = now;
 
-      tempCtx.drawImage(video, sx, sy, size, size, 0, 0, MODEL_SIZE, MODEL_SIZE);
-      const input = preprocess(tempCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE).data);
-      const tensor = new ort.Tensor("float32", input, [1, 3, MODEL_SIZE, MODEL_SIZE]);
+        const vW = video.videoWidth; const vH = video.videoHeight;
+        if (vW === 0 || vH === 0) throw new Error("Video not ready");
 
-      const outputs = await session.run({ images: tensor });
-      processAndDrawBoxes(outputs[Object.keys(outputs)[0]].cpuData, sx, sy, size);
+        const size = Math.min(vW, vH);
+        const sx = (vW - size) / 2; const sy = (vH - size) / 2;
 
-      setTimeout(detectFrame, 30);
+        tempCtx.drawImage(video, sx, sy, size, size, 0, 0, MODEL_SIZE, MODEL_SIZE);
+        const imgData = tempCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE).data;
+        const input = preprocess(imgData);
+        
+        const tensor = new ort.Tensor("float32", input, [1, 3, MODEL_SIZE, MODEL_SIZE]);
+        const outputs = await session.run({ images: tensor });
+        
+        processAndDrawBoxes(outputs[Object.keys(outputs)[0]].cpuData, sx, sy, size);
+      } catch (e) {
+        console.warn("偵測跳幀保護:", e);
+      } finally {
+        isProcessingFrame = false;
+        requestAnimationFrame(detectFrame); // 算完才呼叫下一幀
+      }
     }
 
+    // 效能優化：加速預處理迴圈
     function preprocess(data) {
       const frameSize = MODEL_SIZE * MODEL_SIZE;
+      const INV_255 = 1.0 / 255.0; // 避免在迴圈內做除法
       for (let i = 0; i < frameSize; i++) {
-        inputBuffer[i] = data[i * 4] / 255; 
-        inputBuffer[i + frameSize] = data[i * 4 + 1] / 255; 
-        inputBuffer[i + frameSize * 2] = data[i * 4 + 2] / 255; 
+        const idx = i * 4;
+        inputBuffer[i]                 = data[idx]     * INV_255; 
+        inputBuffer[i + frameSize]     = data[idx + 1] * INV_255; 
+        inputBuffer[i + frameSize * 2] = data[idx + 2] * INV_255; 
       }
       return inputBuffer;
     }
@@ -311,7 +340,6 @@
       ctx.lineWidth = type === 'active' ? 2 : 1.5;
       drawRoundedRect(ctx, x, y, w, h, 12); ctx.stroke();
 
-      // 【修改點】文字內容移除了信心率百分比，只保留純物件名稱
       ctx.font = "600 13px -apple-system, BlinkMacSystemFont, sans-serif";
       const txt = label.toUpperCase(); 
       const txtW = ctx.measureText(txt).width;
@@ -353,33 +381,35 @@
       
       for (let i = frozenTags.length - 1; i >= 0; i--) {
         const tag = frozenTags[i];
-        // 【修改點】點擊判定的寬度計算同步移除百分比，維持點擊點精準度
         const txt = tag.label.toUpperCase(); 
         const labelW = ctx.measureText(txt).width + 20 + 26; 
         const labelH = 28;
         const labelY = tag.y - labelH - 15;
 
+        // 點擊刪除按鈕
         if (pos.x >= (tag.x + labelW - 28) && pos.x <= (tag.x + labelW) &&
             pos.y >= labelY && pos.y <= (labelY + labelH)) {
+          
+          // 效能優化：主動清除不再使用的圖形元素釋放記憶體
+          if (tag.imgSnippet) { tag.imgSnippet.width = 0; tag.imgSnippet = null; }
           frozenTags.splice(i, 1);
+          
           playDeleteSound(); 
           statusText.innerText = "🗑️ 空間定格已解除";
           return; 
         }
 
+        // 點擊拖移
         if ((pos.x >= tag.x && pos.x <= tag.x + tag.w && pos.y >= tag.y && pos.y <= tag.y + tag.h) ||
             (pos.x >= tag.x && pos.x <= tag.x + labelW && pos.y >= labelY && pos.y <= labelY + labelH)) {
-          
           draggingTag = tag;
-          dragOffsetX = pos.x - tag.x;
-          dragOffsetY = pos.y - tag.y;
-          
-          frozenTags.splice(i, 1);
-          frozenTags.push(tag);
+          dragOffsetX = pos.x - tag.x; dragOffsetY = pos.y - tag.y;
+          frozenTags.splice(i, 1); frozenTags.push(tag);
           return;
         }
       }
 
+      // 新增定格
       for (let i = currentFrameDetections.length - 1; i >= 0; i--) {
         const tag = currentFrameDetections[i];
         if (pos.x >= tag.x && pos.x <= tag.x + tag.w && pos.y >= tag.y && pos.y <= tag.y + tag.h) {
@@ -390,7 +420,12 @@
           frozenItem.imgSnippet = snippetCanvas; 
 
           frozenTags.push(frozenItem);
-          if (frozenTags.length > 20) frozenTags.shift();
+          
+          // 效能優化：當定格數量過多時，主動回收被擠掉的畫布
+          if (frozenTags.length > 20) {
+            const removed = frozenTags.shift();
+            if (removed.imgSnippet) { removed.imgSnippet.width = 0; removed.imgSnippet = null; }
+          }
 
           speakObject(tag.label);
           playSpatialPing(tag.x + tag.w / 2, canvas.width, tag.h / canvas.height);
@@ -406,22 +441,14 @@
       draggingTag.x = pos.x - dragOffsetX;
       draggingTag.y = pos.y - dragOffsetY;
     }
-
     function handleUp() { draggingTag = null; }
 
     canvas.addEventListener('mousedown', (e) => handleDown(e, 'mouse'));
     canvas.addEventListener('mousemove', (e) => handleMove(e, 'mouse'));
     canvas.addEventListener('mouseup', handleUp);
     canvas.addEventListener('mouseleave', handleUp);
-
-    canvas.addEventListener('touchstart', (e) => {
-      if (e.cancelable) e.preventDefault(); 
-      handleDown(e, 'touch');
-    }, { passive: false });
-    canvas.addEventListener('touchmove', (e) => {
-      if (e.cancelable) e.preventDefault(); 
-      handleMove(e, 'touch');
-    }, { passive: false });
+    canvas.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); handleDown(e, 'touch'); }, { passive: false });
+    canvas.addEventListener('touchmove', (e) => { if (e.cancelable) e.preventDefault(); handleMove(e, 'touch'); }, { passive: false });
     canvas.addEventListener('touchend', handleUp);
     canvas.addEventListener('touchcancel', handleUp);
 
