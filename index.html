@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>VisionOS 3D 空間電子寵物互動</title>
+  <title>VisionOS 3D 空間電子寵物互動 - 優化版</title>
   
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
   
@@ -47,7 +47,7 @@
       width: 100vw;
       height: 100vh;
       z-index: 2;
-      pointer-events: none; /* 穿透點擊 */
+      pointer-events: none;
     }
 
     /* 3. 上層 Three.js 容器：用來渲染 3D 機器人 */
@@ -58,7 +58,7 @@
       width: 100vw;
       height: 100vh;
       z-index: 3;
-      pointer-events: none; /* 穿透點擊 */
+      pointer-events: none;
     }
 
     /* 4. VisionOS 風格頂部狀態列 */
@@ -82,6 +82,7 @@
       font-size: 14px;
       font-weight: 500;
       letter-spacing: 0.5px;
+      white-space: nowrap;
     }
 
     #fps {
@@ -111,6 +112,7 @@
       box-shadow: 0 4px 15px rgba(255, 255, 255, 0.3), inset 0 1px 0 rgba(255,255,255,1);
       transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
       letter-spacing: 1px;
+      white-space: nowrap;
     }
 
     #startBtn:hover:not(:disabled) {
@@ -139,7 +141,7 @@
 
   <div class="top-bar">
     <span id="statusText">正在初始化主機...</span>
-    <span id="fps">FPS: --</span>
+    <span id="fps">AI FPS: --</span>
   </div>
 
   <div class="control-panel">
@@ -164,6 +166,9 @@
     tempCanvas.height = MODEL_SIZE;
     const tempCtx = tempCanvas.getContext("2d");
 
+    // 【核心優化 1】全域預撥固定記憶體，防止反覆建立陣列導致垃圾回收（GC）爆滿卡死
+    const inputBuffer = new Float32Array(3 * MODEL_SIZE * MODEL_SIZE);
+
     const classNames = [
       'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
       'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat',
@@ -186,7 +191,7 @@
 
     function speakObject(label) {
       const now = Date.now();
-      if (label === lastSpokenLabel && now - lastSpokenTime < 4000) return;
+      if (label === lastSpokenLabel && now - lastSpokenTime < 5000) return;
       const msg = new SpeechSynthesisUtterance(label);
       msg.lang = "en-US";
       msg.rate = 1.1;
@@ -198,7 +203,7 @@
 
     function playSpatialPing(centerX, canvasW, distanceScale) {
       const now = Date.now();
-      if (now - lastPingTime < 800) return;
+      if (now - lastPingTime < 1000) return; // 稍微拉長間隔減少音訊處理負擔
       lastPingTime = now;
       if (!audioCtx) return;
 
@@ -213,7 +218,7 @@
       osc.frequency.setValueAtTime(baseFreq, audioCtx.currentTime);
       osc.frequency.exponentialRampToValueAtTime(150, audioCtx.currentTime + 0.12);
 
-      const volume = Math.min(0.15 + (distanceScale * 0.2), 0.4);
+      const volume = Math.min(0.12 + (distanceScale * 0.15), 0.3);
       gainNode.gain.setValueAtTime(volume, audioCtx.currentTime);
       gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
 
@@ -244,7 +249,7 @@
 
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // 限制 PixelRatio 最高為 2 防止行動端卡頓
       document.getElementById("threejs-container").appendChild(renderer.domElement);
 
       const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
@@ -291,7 +296,7 @@
 
       if (petMixer) petMixer.update(delta);
 
-      // 機器人 3D 物理追蹤 (Lerp 插值公式)
+      // 機器人 3D 物理追蹤 (Lerp 動態平滑插值)
       if (pet3D.model && pet3D.state === "WALKING") {
         pet3D.model.position.lerp(pet3D.targetPosition, 0.05);
 
@@ -307,7 +312,7 @@
             danceAction.reset().play();
           }
 
-          // 互動 4 秒後自動恢復 Idle
+          // 互動完 4 秒後自動恢復 Idle 狀態
           setTimeout(() => {
             if (pet3D.state === "ACTION") {
               pet3D.state = "IDLE";
@@ -346,7 +351,6 @@
       }
     }
 
-    // 監聽視窗縮放，保持 3D 滿版與相機比例正確
     window.addEventListener('resize', () => {
       if (camera && renderer) {
         camera.aspect = window.innerWidth / window.innerHeight;
@@ -385,11 +389,12 @@
     };
 
     let lastFrameTime = performance.now();
+    
     async function detectFrame() {
       if (!session || !isDetecting) return;
 
       const now = performance.now();
-      fpsText.innerText = `FPS: ${Math.round(1000 / (now - lastFrameTime))}`;
+      fpsText.innerText = `AI FPS: ${Math.round(1000 / (now - lastFrameTime))}`;
       lastFrameTime = now;
 
       const vW = video.videoWidth;
@@ -400,6 +405,8 @@
 
       tempCtx.drawImage(video, sx, sy, size, size, 0, 0, MODEL_SIZE, MODEL_SIZE);
       const imageData = tempCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE);
+      
+      // 使用優化後的全域快取前處理
       const input = preprocess(imageData.data);
       const tensor = new ort.Tensor("float32", input, [1, 3, MODEL_SIZE, MODEL_SIZE]);
 
@@ -407,18 +414,21 @@
       const outputData = outputs[Object.keys(outputs)[0]].cpuData;
 
       drawBoxes(outputData, sx, sy, size);
-      requestAnimationFrame(detectFrame);
+
+      // 【核心優化 2】將原本的 requestAnimationFrame 改為具備 30ms 喘息時間的 setTimeout
+      // 降低推論總頻率，把 CPU 主執行緒釋放出來，網頁與 3D 渲染立馬流暢、不當機！
+      setTimeout(detectFrame, 30);
     }
 
+    // 【核心優化 1 的實作】不再重複創建 Float32Array
     function preprocess(data) {
-      const float32Data = new Float32Array(3 * MODEL_SIZE * MODEL_SIZE);
       const frameSize = MODEL_SIZE * MODEL_SIZE;
       for (let i = 0; i < frameSize; i++) {
-        float32Data[i] = data[i * 4] / 255; 
-        float32Data[i + frameSize] = data[i * 4 + 1] / 255; 
-        float32Data[i + frameSize * 2] = data[i * 4 + 2] / 255; 
+        inputBuffer[i] = data[i * 4] / 255; 
+        inputBuffer[i + frameSize] = data[i * 4 + 1] / 255; 
+        inputBuffer[i + frameSize * 2] = data[i * 4 + 2] / 255; 
       }
-      return float32Data;
+      return inputBuffer;
     }
 
     // --- 4. 2D 渲染與 3D 空間目標轉換 ---
@@ -459,19 +469,14 @@
           playSpatialPing(x + w / 2, canvasW, h / canvasH);
         }
 
-        // --- 3D 空間追蹤邏輯 ---
+        // --- 3D 空間導航演算法 ---
         if (pet3D.state === "IDLE" && pet3D.model) {
-          // 當看見人、沙發、椅子、水瓶等物件時觸發導航
           if (label === "person" || label === "couch" || label === "chair" || label === "bottle") {
             const centerX = x + w / 2;
-            
-            // 2D 螢幕 X 座標轉為 3D 的 NDC 座標 
-            const ndcX = (centerX / canvasW) * 2 - 1;
-
-            // 計算平滑跟隨的 3D X 軸橫移位置
+            const ndcX = (centerX / canvasW) * 2 - 1; // 轉為 3D NDC 座標
             const targetX = ndcX * 3.5 * (canvasW / canvasH);
             
-            // Y 軸固定在 -1.2 模擬地面，Z 軸固定在 -4（相機前方 4 公尺）
+            // X隨物體移動，Y置於低處模擬地面(-1.2)，Z保持在人眼前方4米(-4)
             foundTarget = new THREE.Vector3(targetX, -1.2, -4);
           }
         }
@@ -486,7 +491,7 @@
         ctx.stroke();
         ctx.restore();
 
-        // B. 懸浮標籤
+        // B. 懸浮玻璃標籤
         ctx.font = "600 13px -apple-system, BlinkMacSystemFont, sans-serif";
         const txt = `${label.toUpperCase()} ${Math.round(score * 100)}%`;
         const txtWidth = ctx.measureText(txt).width;
@@ -507,7 +512,7 @@
         drawVisionCorners(ctx, x, y, w, h, 18);
       }
 
-      // --- 啟動 3D 追蹤尋路 ---
+      // --- 驅動 3D 機器人尋路 ---
       if (foundTarget && pet3D.state === "IDLE") {
         pet3D.targetPosition.copy(foundTarget);
         pet3D.state = "WALKING";
@@ -519,7 +524,7 @@
       }
     }
 
-    // 繪圖輔報工具函式
+    // 繪圖輔助工具函式
     function drawVisionCorners(ctx, x, y, w, h, len) {
       ctx.save();
       ctx.strokeStyle = "#00ff88";
